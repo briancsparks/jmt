@@ -1,0 +1,61 @@
+#!/usr/bin/env node
+/* vim: filetype=javascript :
+ *
+ * When writing pipe-centric bash scripts or commands, you generally cannot write
+ * the stream to the file that is the source of the stream.  This utility allows
+ * you to do that, and it also:
+ *
+ * * Will not write anything if an error occurrs upstream.
+ */
+
+var fs        = require('fs');
+
+var ARGV      = process.argv.slice(2);
+
+if (ARGV.length < 2 || !ARGV[0].match(/^-[a-zA-Z0-9]+$/) || !ARGV[0].match(/o/)) {
+  console.error("MUST provide out file with -o parameter", ARGV);
+  process.exit(1);
+}
+else {
+
+  var outfile = ARGV[1];
+  var verbose = ARGV[2] === '--verbose';
+  var success = true;
+
+  var chunks = [];
+  process.stdin.on('data', function(chunk) {
+    chunks.push(chunk);
+    if (verbose) { console.error("Read " + chunk.length); }
+  });
+
+  process.stdin.on('end', function() {
+    if (verbose) { console.error("end"); }
+    process.nextTick(function() {
+      var ok = true;
+
+      if (!success) { console.error("Error occurred -- not writing"); ok = false; }
+      if (chunks.length === 0 || chunks.length === 1 && chunks[0].length === 0) {
+        if (verbose) { console.error("Zero bytes -- that cant be right -- not writing"); }
+        ok = false;
+      }
+
+      if (ok) {
+        fs.open(outfile, 'w', function(err, fd) {
+          if (err) { console.error("Error opening " + outfile + "... Aborting"); }
+
+          chunks.forEach(function(chunk) {
+            var written = fs.writeSync(fd, chunk, 0, chunk.length, null);
+            if (verbose) { console.error("Written " + written); }
+          });
+          fs.closeSync(fd);
+        });
+      }
+    });
+  });
+
+  process.stdin.on('error', function() {
+    if (verbose) { console.error("ERROR -- not writing"); }
+    success = false;
+  });
+}
+

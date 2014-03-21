@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+
+# The master file for gnuplot real-time graphing
+#
+# gprt
+#     -- The main utility.  Just start gprt and it sets up a bunch of temp files, and gets everything started
+#
+# gprt data
+#     -- This utility gives the name of the data file, so you can 
+#
+#             generate-data > `gprt data`
+#
+# gprt up[date] title
+#
+
+die()
+{
+  echo "$@" 1>&2 
+  exit 1
+}
+
+#echo "~~~~~~~~~~~~~~~ GPRT $@ ~~~~~~~~~~"
+test -z "$jmt_pid" && die "no pid"
+
+if [[ "$3" == "--datafile" && "$1" == "--conffile" ]]; then
+  test -f `jmt gpconffile` || die "no gunplot conf file"
+
+  datafile="$4"
+  conffile="$2"
+
+  conffile0=`jmt gpconffile`
+  [ -z "$conffile0" ] && die "No conffile!!  Run in a directory that has a gnuplot*.conf file"
+
+  socket=`jmt tmpfile gp_socket`
+
+  rm $socket
+  echo "Spawning socat $socket"
+  socat UNIX-LISTEN:${socket},fork - | gnuplot &
+  grep -v '^plot' $conffile0 > $conffile
+  printf "$(awk -F\" '$0~/^plot/ {print $1"\"%s\""$3}' $conffile0)\n" $datafile >> $conffile
+
+  touch $datafile
+  #test -f $datafile || echo "1 2" > $datafile
+
+  # Spy on the data file
+  jmt spy --verbose "$(awk -F\" '$0~/^plot/ {print $1"\"%s1\""$3}' $conffile)" -- $datafile | socat - UNIX-CONNECT:${socket} &
+
+  sleep 0.5   # Let gnuplot start
+  touch $conffile
+
+  jmt spy --verbose 'load "%s1"' -- $conffile | socat - UNIX-CONNECT:${socket}
+
+  exit 0
+fi
+
+if [[ "$1" == "data" ]]; then
+  echo $(ps ax | grep -o 'gprt.*' | grep -o -- '--datafile.*' | cut -d' ' -f2- | head -1)
+  exit 0
+fi
+
+if [[ "$1" == "update" || "$1" == "up" ]]; then
+  conffile="$(ps ax | grep -o 'gprt.*' | grep -o -- '--conffile.*' | cut -d' ' -f2 | head -1)"
+  clean_title=`echo $2 | tr '/' '-'`
+  test -f $conffile && cat $conffile | sed "s/set title.*/set title \"${clean_title}\"/" | jmt inplace -o $conffile
+  exit 0
+fi
+
+# Where is the socket?
+if [ "$1" == "socket" ]; then
+  echo "`dirname $(ps ax | grep -o 'gprt.*' | grep -o -- '--datafile.*' | cut -d' ' -f2 | head -1)`/gp_socket"
+  exit 0
+fi
+
+# Set a property (like doing a 'set' command in the gnuplot repl)
+if [ "$1" == "--set" ]; then
+  shift
+  echo "set $@" | socat - UNIX-CONNECT:`jmt gprt socket`
+  exit 0
+fi
+
+# otherwise
+jmt gprt --conffile `jmt tmpfile gnuplot.conf` --datafile `jmt tmpfile data.dat`
+

@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+
+port="6380"
+db="0"
+
+[ -n "$r_port" ] && port="$r_port"
+[ -n "$r_db" ]   && db="$r_db"
+
+
+script="$jmt_dir/sh/_redis/_lua/$1.lua"
+if [ -f "$script" ]; then
+  shift
+  redis-cli -p $port -n $db EVAL "$(cat $script)" "$@"
+  exit "$?"
+fi
+
+script="$(pwd)/$1.lua"
+if [ -f "$script" ]; then
+  shift
+  redis-cli -p $port -n $db EVAL "$(cat $script)" "$@"
+  exit "$?"
+fi
+
+script="$(pwd)/$1_r.lua"
+if [ -f "$script" ]; then
+  shift
+  redis-cli -p $port -n $db EVAL "$(cat $script)" "$@"
+  exit "$?"
+fi
+
+script="$(pwd)/bin/$1.lua"
+if [ -f "$script" ]; then
+  shift
+  redis-cli -p $port -n $db EVAL "$(cat $script)" "$@"
+  exit "$?"
+fi
+
+script="$(pwd)/bin/$1_r.lua"
+if [ -f "$script" ]; then
+  shift
+  redis-cli -p $port -n $db EVAL "$(cat $script)" "$@"
+  exit "$?"
+fi
+
+script="$(pwd)/../bin/$1.lua"
+if [ -f "$script" ]; then
+  shift
+  redis-cli -p $port -n $db EVAL "$(cat $script)" "$@"
+  exit "$?"
+fi
+
+script="$(pwd)/../bin/$1_r.lua"
+if [ -f "$script" ]; then
+  shift
+  redis-cli -p $port -n $db EVAL "$(cat $script)" "$@"
+  exit "$?"
+fi
+

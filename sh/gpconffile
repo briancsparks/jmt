@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+
+source <(jmt --inttools)
+
+conf="$1"
+if [[ -z "$conf" ]]
+then
+  #if ls gnuplot*.conf 2>&1 > /dev/null
+  if ls gnuplot*.conf 2> /dev/null > /dev/null
+  then
+    conf=`ls gnuplot*.conf | head -1`
+  fi
+
+  if [[ -z "$conf" ]]
+  then
+    if ls ../gnuplot*.conf 2> /dev/null > /dev/null
+    then
+      conf=`ls ../gnuplot*.conf | head -1`
+    fi
+  fi
+
+fi
+
+[[ -z "$conf" ]] && die 2 "gnuplot conf file not found"
+
+echo "$conf"
+
+

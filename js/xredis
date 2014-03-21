@@ -1,0 +1,253 @@
+#!/usr/bin/env node
+/* vim: filetype=javascript :
+ */
+
+/**
+ *  xredis: what "xargs redis-cli ..." should have been.
+ *
+ *  Usages:
+ *
+ *          xredis [options] SADD a:~1:type ~2
+ *
+ *  options:
+ *  
+ *    -         Send the redis-multi format to stdout
+ *
+ *  Not for stdout:
+ *    -mN       Merge
+ *    -rN       Reverse merge
+ */
+
+var remainder = '';
+var lines_buffer = [];
+
+var need_to_interpret_args = false;
+
+var outstream;
+
+var numOks = 0, totalOks = 0, numZeros = 0, totalZeros = 0, numOnes = 0, totalOnes = 0, doReporting = true;
+function reportOks() {
+  if (numOks) {
+    totalOks += numOks;
+    console.log("+OK (" + numOks + "/" + totalOks + ")");
+    numOks = 0;
+  }
+
+  if (numOnes) {
+    totalOnes += numOnes;
+    console.log(":1 (" + numOnes + "/" + totalOnes + ")");
+    numOnes = 0;
+  }
+
+  if (numZeros) {
+    totalZeros += numZeros;
+    console.log(":0 (" + numZeros + "/" + totalZeros + ")");
+    numZeros = 0;
+  }
+
+  if (doReporting)
+    setTimeout(reportOks, 1000);
+}
+reportOks();
+
+function main() {
+  var m, merge, rmerge;
+
+  // Make a copy
+  var ARGV = process.argv.slice(2);
+
+  if (ARGV[0] === '-') {
+    outstream = process.stdout;
+    ARGV.shift();
+  }
+  else {
+    var lines0Remainder = '';
+
+    //var port = 6379, dbNum = 0;
+    //while (ARGV.length > 0) {
+    //  if (ARGV[0] === '-p') {
+    //    ARGV.shift();
+    //    port = ARGV.shift();
+    //  }
+    //}
+
+    outstream = require('net').connect({port: 6380}, function(){});
+    outstream.on('data', function(chunk) {
+      var lines = [];
+      var sub_item, i;
+      var line = lines0Remainder + chunk.toString();
+      var lines0 = line.split('\r\n');
+
+      lines0Remainder = lines0.pop();
+
+      lines0 = lines0.filter(function(x) {return x[0] !== '*' && x[0] !== '$' && x;});
+      lines0 = lines0.filter(function(x) {
+        if (x === "+OK") { numOks++; return false; }
+        if (x === ":0")  { numZeros++; return false; }
+        //if (x === ":1")  { numOnes++; return false; }
+        else if (/:[0-9]+/.exec(x)) {
+          numOnes += parseInt(x.substr(1), 10);
+          return false;
+        }
+        return true;
+      });
+
+      while (lines0.length) {
+        sub_item = [];
+        if (merge) {
+          for (i = 0; i < merge; ++i) {
+            sub_item.push(lines0[i]);
+          }
+          lines.push(sub_item.join(' '));
+          lines0.splice(0, merge);
+        } else if (rmerge) {
+          for (i = rmerge - 1; i >= 0; --i) {
+            sub_item.push(lines0[i]);
+          }
+          lines.push(sub_item.join(' '));
+          lines0.splice(0, rmerge);
+        }
+        else {
+          lines.push(lines0.shift());
+        }
+      }
+
+      lines.forEach(function(line) {
+        process.stdout.write(line + '\n');
+      });
+      //console.log(lines);
+    });
+    //encode(['SELECT', '39']);
+  }
+
+  if ((m = /^-r([0-9]+)$/.exec(ARGV[0]))) {
+    rmerge = m[1];
+    ARGV.shift();
+  }
+
+  if ((m = /^-m([0-9]+)$/.exec(ARGV[0]))) {
+    merge = m[1];
+    ARGV.shift();
+  }
+
+  // Get common params from ARGV
+  var const_args = ARGV.slice();
+
+  // Do we have any command line parameters for substution -- like ~1 %4 or {} ?
+  need_to_interpret_args = /((~|%)[0-9]+|{})/.exec(const_args.join(' '));
+
+  outstream.setEncoding('utf8');
+
+  // Read lines from stdin
+  read_lines_from_stdin(function(line) {
+    var outs, words = line.split(/ |\t/);
+    var used_up = [];
+
+    if (need_to_interpret_args) {
+      outs = [];
+      const_args.forEach(function(x_) {
+        var replacement, index;
+
+       var x = x_.replace(/~(\d+)/g, function(m, p) {var y=words[p-1]; if (y) { used_up[p-1]=true; return y;} return '';});
+
+        //var m = /^(~|%)([0-9]+)/.exec(x);
+        //if (m) {
+        //  index = m[2]-1;
+        //  if (words[index]) {
+        //    replacement = words[index];
+        //    used_up[index] = true;
+        //    outs.push(replacement);
+
+        //    //console.log("A" + replacement);
+        //    return;
+        //  }
+        //}
+
+        //m = /^([^~%]*)(~|%)([0-9]+)(.*)$/.exec(x);
+        //if (m) {
+        //  index = m[3]-1;
+        //  if (words[index]) {
+        //    replacement = words[index];
+        //    used_up[index] = true;
+        //    outs.push( m[1]+replacement+m[4]);   // TODO: replace more than just one occurrance
+
+        //    //console.log("B" + replacement);
+        //    return;
+        //  }
+        //}
+
+        if (x === '{}') {
+          outs = outs.concat(words);
+          used_up = words.map(function() {return true;});
+          //console.log("C" + replacement);
+          return;
+        }
+
+        m = /^([^{]*){}(.*)$/.exec(x);
+        if (m) {
+          replacement = words[index];
+          used_up = words.map(function() {return true;});
+          outs.push(m[1] + words.join(' ') + m[2]);   // TODO: replace more than just one occurrance
+          //console.log("D" + words.join(' '));
+          return;
+        }
+
+        outs.push(x);
+        //console.log("E" + replacement);
+      });
+    }
+    else {
+      outs = const_args.slice().concat(words);
+      used_up = words.map(function() {return true;});
+    }
+
+    words = words.filter(function(x, i) {return !used_up[i];});
+    outs = outs.concat(words);
+
+    outs = outs.filter(function(x) {return x;});
+    //console.log(outs);
+    encode(outs);
+
+  }, function done() {
+    if (outstream !== process.stdout) {
+      outstream.end();
+    }
+    doReporting = false;
+    reportOks();
+  });
+}
+
+function encode(list) {
+
+  outstream.write('*' + list.length + '\r\n');
+  list.forEach(function(x) {
+    outstream.write('$' + x.length + '\r\n');
+    outstream.write(x + '\r\n');
+  });
+
+}
+
+var read_lines_from_stdin = function(fn, fnDone_) {
+
+  var fnDone = fnDone_ || function() {};
+
+  // Grab lines from stdin
+  process.stdin.resume();
+  process.stdin.setEncoding('utf8');
+  process.stdin.on('data', function(chunk) {
+    process.stdin.pause();
+
+    remainder += chunk;
+    var lines = remainder.split('\n');
+    remainder = lines.pop();
+
+    lines.forEach(fn);
+    setTimeout(function() {process.stdin.resume();}, 5);
+  });
+
+  process.stdin.on('end', fnDone);
+};
+
+main();
+
+

@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+
+port="6380"
+db="0"
+
+[ -n "r_port" ] && port="$r_port"
+[ -n "r_db" ]   && db="$r_db"
+
+# r SINTERslugSTOREguid  and  r SINTERxSTOREy
+if echo "$1" | egrep 'SINTER[a-zA-Z0-9_]+STORE[a-zA-Z0-9_]+' > /dev/null; then
+
+  # r SINTERxSTOREy
+  if [[ "$1" == "SINTERxSTOREy" ]]; then
+    shift
+
+    query_type="$1"; shift
+    store_type="$1"; shift
+  else
+    query_type=`echo $1 | sed 's/^SINTER//; s/STORE.*$//'`
+    store_type=`echo $1 | sed 's/^[a-zA-Z0-9_]*STORE//'`
+    shift
+  fi
+
+  store_name="$1"; shift
+
+  redis-cli -p $port -n $db SINTER "$@" | \
+    xargs -r -L 1 -I {} redis-cli -p $port -n $db SMEMBERS "$query_type:{}:${store_type}s" | \
+    xargs -r -L 1 redis-cli -p $port -n $db SADD $store_name  > /dev/null
+
+  exit 0
+fi
+
+redis-cli -p $port -n $db "$@"
+

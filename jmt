@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+
+export jmt_dir=$(dirname $(readlink -f `which $0`))
+
+if [[ -z "$jmt_pid" ]]; then
+  export jmt_pid="$$"
+fi
+
+# How did the user invoke us?
+user_invoked=`echo $0 | sed 's/^.*\///g'`
+
+internal_command=0
+
+# Did they invoke simply 'jmt' ?
+if [ "$user_invoked" == "jmt" ]; then
+  if [ "$#" -eq "0" ]; then
+    # They invoked just 'jmt'
+    exit 0
+  fi
+
+  # Did they invoke an internal command (like "jmt --inttools")?
+  internal_command=1
+
+  # If they invoked "jmt foo ..." then they want the foo sub-command
+  if ! echo "$1" | egrep -- '^--[^-]' 2>&1 > /dev/null; then
+    sub_cmd="$1"; shift
+    user_invoked="jmt-$sub_cmd"
+    internal_command=0
+  fi
+
+# The user might have invoked a command other than "jmt", if a sym-link.
+else
+  user_invoked="jmt-$user_invoked"
+fi
+
+if [[ "$internal_command" -eq "0" ]]; then
+
+  # If they invoked something like "jmt-x" try and find utility x in the rb or js or sh folder
+  tool="$jmt_dir/`echo $user_invoked | sed 's/jmt-/rb\//'`"
+  if test -x $tool; then
+    $tool "$@"
+  else
+    tool="$jmt_dir/`echo $user_invoked | sed 's/jmt-/js\//'`"
+    if test -x $tool; then
+      $tool "$@"
+    else
+      tool="$jmt_dir/`echo $user_invoked | sed 's/jmt-/sh\//'`"
+      if test -x $tool; then
+        $tool "$@"
+      else
+        echo "JMT tool $user_invoked was not found."
+        exit 1
+      fi
+    fi
+  fi
+else
+  # They want a jmt toolkit command
+  if [[ "$1" == "--inttools" ]]; then
+    # The 'internal' tools -- they should have invoked as 'source <(jmt --inttools)'
+    $jmt_dir/tools/inttools
+  fi
+
+fi
+
+

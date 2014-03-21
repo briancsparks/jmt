@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+
+if [[ "$#" -gt "1" ]]; then
+  #echo "spaces!!" "$@" 1>&2
+  exit 0
+fi
+
+if echo "$@" | grep ' ' > /dev/null; then
+  #echo "spaces!!" "$@" 1>&2
+  exit 0
+fi
+
+halt_runaway='0'
+if [[ "$halt_runaway" != "0" ]]; then exit 1; fi
+
+
+curr_dir='.'
+if [[ "$#" -gt "0" ]]; then curr_dir="$1"; shift; fi
+
+# List files in the curr dir
+find "$curr_dir/" -maxdepth 1 -type f | \
+  sort | \
+  while read f; do
+    if echo $f | egrep '/[^/]+\.[^/]+$' > /dev/null; then
+      echo $f | egrep '\.(js|c|cpp|rb|java|awk|sed|sh|py|ru)$' | egrep -v ' '
+    else
+      #echo "~~~~~~~~~~~~~!!!!!!!!!!!!!!!!~~~~~~ Opening $f" 1>&2
+      if head -1 $f 2> /dev/null | egrep '^#!' > /dev/null; then
+        echo $f
+      fi
+    fi
+
+    if [[ "$halt_runaway" != "0" ]]; then exit 1; fi
+  done
+
+#echo "---------------------" 1>&2
+
+# Kick off sub-dir query
+find "$curr_dir/" -maxdepth 1 -type d | egrep -v '^(\./)?$' | egrep -v '^\./\.' | egrep -v '^\.[^/]' | egrep -v "^$curr_dir/?$" | \
+  egrep -v "$d(Documents$|Downloads$|Desktop$|Library$|zz_packages$|local$)" | \
+  egrep -v "$d(.git|node_modules|android-ndk-|android-sdk-|cordova$|kipr$|tmp$|tmpStatic$|xzinglib$)" | \
+  sort | \
+  while read d; do
+    #echo "~~~~~ $d" 1>&2
+    $0 "$d"
+
+    if [[ "$halt_runaway" != "0" ]]; then exit 1; fi
+  done
+
+

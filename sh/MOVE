@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+
+exec +x
+
+keys='*'
+src='2'
+dest='0'
+
+if [[ "$#" -gt "0" ]]; then keys="$1"; shift; fi
+if [[ "$#" -gt "0" ]]; then src="$1";  shift; fi
+if [[ "$#" -gt "0" ]]; then dest="$1"; shift; fi
+
+echo "Moving $keys from $src to $dest"
+
+redis-cli -p 6380 -n $src $keys | head -2 | \
+  while read key; do
+    echo "$key"
+    type=`redis-cli -p 6380 -n $src TYPE $key`
+    case $type in
+      set)
+        echo $type
+        redis-cli -p 6380 -n $src SMEMBERS $key | head | xargs -L 100 -r echo | xargs -L 1 -r redis-cli -p 6380 -n $dest SADD $key
+        ;;
+
+      string)
+        redis-cli -p 6380 -n $dest SET $key `redis-cli -p 6380 -n $src GET $key`
+        ;;
+    esac
+  done

@@ -1,0 +1,94 @@
+#!/usr/bin/env node
+/* vim: filetype=javascript :
+ *
+ * Spy on a file and when it changes, spit out a string.
+ *
+ * Generally, you pipe spy to a command:
+ * 
+ *        spy "load %s1" foo.dat | run-some-command 
+ *
+ * This will send the string "load foo.dat" to the stdin of run-some-command.
+ */
+
+var _         = require('underscore');
+var util      = require('util'), sys = util;
+var fs        = require('fs');
+var path      = require('path');
+var glob      = require('glob');
+var sg        = require('./utils/sg');
+
+var die_trying  = sg.die_trying;
+var printf      = sg.printf;
+
+var m;
+var options = {};
+var filenames = {};
+sg.__run([
+
+  // Process command-line parameters
+  function(next) {
+    var onlyFilenames = false;
+
+    if (process.argv.length <= 2) {
+      sg.die(1, "Usage: spy [--quote | -q | --verbose] format filename");
+    }
+
+    sg.__each(next, _.rest(process.argv, 2), function(arg, nextArg) {
+      if (arg === '--') { onlyFilenames = true; return nextArg(); }
+
+      if (!onlyFilenames) {
+        if ((m = /--(.+)/.exec(arg))) { options[m[1]] = true; return nextArg(); }
+        if ((m = /-(.+)/.exec(arg))) { options[m[1]] = true; return nextArg(); }
+        if (!options.format) { setFormat(arg); return nextArg(); }
+      }
+
+      glob(arg, die_trying(function(_X, files) {
+        _.each(files, function(file) {
+          var fullFilename = file[0] === '/' ? file : path.join(process.cwd(), file);
+          filenames[fullFilename] = true;
+        });
+        return nextArg();
+      }));
+    });
+  }],
+
+  // main
+  function() {
+    logit("Command line: ", process.argv);
+
+    _.each(filenames, function(item, filename) {
+      watch(filename);
+    });
+  }
+);
+
+var watch = function(filename) {
+  logit("Watching: " + filename);
+  fs.watchFile(filename, {persistent: true, interval: 25}, function(curr, prev) {
+    if (curr.mtime === prev.mtime) { return; }
+
+    var msgFilename = filename;
+    if (options.q || options.quote) {
+      msgFilename = '"' + msgFilename + '"';
+    }
+
+    var message = sg.printf(options.format || "%s1\n", msgFilename);
+    logit(message.replace('\n', ''));
+
+    process.stdout.write(message);
+  });
+};
+
+var setFormat = function(format) {
+  if (format.substr(-2) !== '\n') {
+    format += '\n';
+  }
+  options.format = format;
+};
+
+var logit = function() {
+  if (options.verbose) {
+    console.error.apply(this, arguments);
+  }
+};
+

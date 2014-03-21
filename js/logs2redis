@@ -1,0 +1,228 @@
+#!/usr/bin/env node
+/* vim: filetype=javascript :
+ */
+
+
+var _         = require('underscore');
+var spawn     = require('child_process').spawn;
+var exec      = require('child_process').exec;
+var glob      = require('glob');
+var fs        = require('fs');
+var sg        = require('./utils/sg');
+var path      = require('path');
+
+var ARGV      = sg.ARGV();
+var redis     = new sg.Redis({port: 6380});
+var redisNoop = new sg.RedisNoop(redis);
+
+// The zero-db
+var redis1    = new sg.Redis({port: 6380});
+redis1.SELECT(1);
+
+var __eachll  = sg.__eachll;
+var __each    = sg.__each;
+
+var on_err    = sg.on_err;
+
+
+// Find filters
+var filters = [];
+var globFilter = {};
+var unusedDbNum = 2, dbs = {};
+
+sg.__run([
+    // Load filter that know apache access files
+    function(next) {
+      if (!ARGV.access) { return next(); }
+
+      //return sg.findFiles(path.dirname(__filename) + '/_logs2redis/apache_access/**/*.js', {}, on_err(next, function(_errX, filenames) {
+      return sg.findFiles(path.dirname(__filename) + '/_logs2redis/apache_access/**/urls.js', {}, on_err(next, function(_errX, filenames) {
+
+        __each(next, filenames,
+          function(filename, nextFilename) {
+            logit("Loading filter: " + filename);
+
+            var mod = require(filename);
+            var register = mod.registerFilters || nieveRegisterFilter(mod);
+
+            register(function(options, filter) {
+              var params = {emitters:{}};
+              _.each(options || {}, function(item, name) {
+                //params.emitters[name] = redisNoop;
+                //if (item.set) {
+                //  params.emitters[name] = redis;
+                //}
+                params.emitters[name] = redis;
+              });
+              filters.push(filter(redis, params));
+            }, sg, nextFilename);
+          });
+      }));
+    },
+
+    // Filter the money file
+    function(next) {
+      if (!ARGV.money) { return next(); }
+
+      return sg.findFiles(path.dirname(__filename) + '/_logs2redis/money/**/*.js', {}, on_err(next, function(_errX, filenames) {
+
+        __each(next, filenames,
+          function(filename, nextFilename) {
+            logit("Loading filter: " + filename);
+
+            var mod = require(filename);
+            var register = mod.registerFilters || nieveRegisterFilter(mod);
+
+            register(function(options, filter) {
+              var params = {emitters:{}};
+              _.each(options || {}, function(item, name) {
+                params.emitters[name] = redis;
+              });
+              filters.push(filter(redis, params));
+            }, sg, nextFilename);
+          });
+      }));
+    },
+
+    // Remove any filter that the filter filter says to remove
+    function(next) {
+      if (ARGV.args.length > 0) {
+        logit("Processing args: " + ARGV.args[0]);
+
+        var filenameRe = new RegExp(ARGV.args[0]);
+        globFilter.filenameFilter = function(filename) {
+          return filenameRe.exec(filename);
+        };
+      }
+      return next();
+    },
+
+    // If this DB already has data for dates, read them
+    function(next) {
+      return redis1.KEYS('date:*:db', function(err, keys) {
+        if (err) { return next(); }
+        if (keys.length === 0) { return next(); }
+
+        return sg.__each(keys, 
+          function(key, nextKey) {
+            return redis1.GET(key, function(err, dbNumber) {
+              dbs[key.split(':')[1]] = dbNumber;
+              if (unusedDbNum <= dbNumber) {
+                unusedDbNum = dbNumber + 1;
+              }
+              return nextKey();
+            });
+          },
+          
+          function() {
+            return next();
+          }
+        );
+      });
+    }
+  ],
+
+  function main() {
+    logit("Starting main");
+
+    redis.SELECT(ARGV.db || 0);
+
+    var separator = ARGV.money ? '~' : /\s+/;
+    var dbForDate = '', date;
+    sg.eachLine('**/*', globFilter,
+      function(line, lineNum, filename) {
+
+        if ((ARGV.names || ARGV.verbose) && lineNum === 0) {
+          logit(filename);
+          if (ARGV.names) { return 'SG.nextFile'; }
+        }
+
+        if (line.length === 0) { return; }
+
+        // Lower case
+        line = line.toLowerCase();
+
+        var lineFields = line.split(separator);
+
+        if (!(date = sg.capturesSync(/(201\d.\d\d.\d\d)/, line)[0])) {
+          //console.error('no date? ' + line);
+          return;
+        }
+
+        if (ARGV.money) {
+          // Fixup the date/ server 
+          var partA = sg.capturesSync(/^\[([^\]]+)\]\[([^\]]+)\]/, line);
+          if (!partA) { return; }
+
+          var time = partA[2].replace(/-\d\d:\d\d$/, '').replace(/-|T/g, '/');
+          lineFields = [time, partA[1]].concat(_.rest(lineFields));
+          line = lineFields.join('~');
+        }
+
+        lineFields[0] = lineFields[0].replace(/[^0-9]/g, '/');
+
+        // New date
+        date = date.replace(/[^0-9]/g, '/');
+        if (date !== dbForDate && !('db' in ARGV)) {
+          if (!dbs[date]) {
+            dbs[date] = unusedDbNum++;
+            redis1.SET('db:'+dbs[date]+':date', date);
+            redis1.SET('date:'+date+':db', dbs[date]);
+
+            if (ARGV.verbose) {
+              console.log(sg.printf("Creating new db for date %s1 (%s2)", date, dbs[date]));
+            }
+          } else {
+            //if (ARGV.verbose) {
+            //  console.log(sg.printf("Switching db for date %s1 (%s2)", dbForDate, dbs[date]));
+            //}
+          }
+
+          redis.SELECT(dbs[date]);
+          dbForDate = date;
+        }
+
+        lineFields.unshift(line);
+
+        var returnStat = null;
+        if (lineNum % 5000 === 0 && lineNum !== 0) {
+          logit(filename, lineNum, lineFields[1], lineFields[7]);
+          returnStat = 'SG.breathe';
+        }
+
+        // The slug
+        //var slug = [lineFields[1], lineNum, lineFields[3]].join('~');
+        var slug = [lineFields[1], lineNum].join('~');
+        lineFields.push(slug);
+
+        _.each(filters, function(filter) {
+          return filter(lineFields, slug);
+        });
+
+        return returnStat;
+      },
+
+      function(err, totalLines) {
+        console.log('Done.  Number of lines: ', totalLines);
+        sg.shutdown();
+      }
+    );
+  }
+);
+
+var nieveRegisterFilter = function(mod) {
+  return function(register, sg, callback) {
+    _.each(mod.filters, function(filter) {
+      register(null, filter);
+    });
+    return callback();
+  };
+};
+
+var logit = function() {
+  if (ARGV.verbose) {
+    console.log.apply(this, arguments);
+  }
+};
+
+

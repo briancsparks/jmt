@@ -1,0 +1,172 @@
+#!/usr/bin/env bash
+
+die()
+{
+  echo $1 1>&2
+  exit 1
+}
+
+days_per_month()
+{
+  case "$1" in
+    01) echo "31" ;;
+    02) echo "28" ;;
+    03) echo "31" ;;
+    04) echo "30" ;;
+    05) echo "31" ;;
+    06) echo "30" ;;
+    07) echo "31" ;;
+    08) echo "31" ;;
+    09) echo "30" ;;
+    10) echo "31" ;;
+    11) echo "30" ;;
+    12) echo "31" ;;
+
+  esac
+}
+
+[ "$#" -gt "1" ] || die "Usage: minute-span <date> <number-of-minutes>"
+
+echo $1 | sed 's/\// /g' | while read y m d h min s _restX; do
+  #echo "$y/$m/$d/$h/$min-$s"
+
+  y=`echo $y | sed 's/^00*//'`
+  m=`echo $m | sed 's/^00*//'`
+  d=`echo $d | sed 's/^00*//'`
+  h=`echo $h | sed 's/^00*//'`
+  min=`echo $min | sed 's/^00*//'`
+  s=`echo $s | sed 's/^00*//'`
+
+  #echo "$y/$m/$d/$h/$min-$s"
+
+  test -z "$y" && y="2013"
+  test -z "$m" && m="1"
+  test -z "$d" && d="1"
+  test -z "$h" && h="0"
+  test -z "$min" && min="0"
+  test -z "$s" && s="0"
+  #echo "$y/$m/$d/$h/$min-$s"
+
+  y1="$y"
+  m1="$m"
+  d1="$d"
+  h1="$h"
+  min1="$min"
+  s1="$s"
+
+  ((y2=y1 + 0))
+  ((m2=m1 + 0))
+  ((d2=d1 + 0))
+  ((h2=h1 + 0))
+  ((min2=min1 + $2))
+  ((s2=s1 + 0))
+
+  #echo "$y1/$m1/$d1/$h1/$min1-$s1 "++" $y2/$m2/$d2/$h2/$min2-$s2"
+
+  if [ "$s2" -gt "59" ]; then
+    ((min2++))
+    ((s2 -= 60))
+  fi
+
+  if [ "$min2" -gt "59" ]; then
+    ((h2++))
+    ((min2 -= 60))
+  fi
+
+  if [ "$h2" -gt "23" ]; then
+    ((d2++))
+    ((h2 -= 24))
+  fi
+
+  if [ "$d2" -gt "`days_per_month $m`" ]; then
+    ((m2++))
+    ((d2 -= `days_per_month $m`))
+  fi
+
+  if [ "$m2" -gt "12" ]; then
+    ((y2++))
+    ((m2 -= 12))
+  fi
+
+  #echo "$y1/$m1/$d1/$h1/$min1-$s1 "++" $y2/$m2/$d2/$h2/$min2-$s2"
+
+  if [ "$s1" -gt "$s2" ]; then
+    tp="$s1"
+    s1="$s2"
+    s2="$tp"
+  fi
+
+  if [ "$min1" -gt "$min2" ]; then
+    tp="$min1"
+    min1="$min2"
+    min2="$tp"
+  fi
+
+  if [ "$h1" -gt "$h2" ]; then
+    tp="$h1"
+    h1="$h2"
+    h2="$tp"
+  fi
+
+  if [ "$d1" -gt "$d2" ]; then
+    tp="$d1"
+    d1="$d2"
+    d2="$tp"
+  fi
+
+  if [ "$m1" -gt "$m2" ]; then
+    tp="$m1"
+    m1="$m2"
+    m2="$tp"
+  fi
+
+  y=`printf "%04d" $y`
+  m=`printf "%02d" $m`
+  d=`printf "%02d" $d`
+  h=`printf "%02d" $h`
+  min=`printf "%02d" $min`
+  s=`printf "%02d" $s`
+
+  y1=`printf "%04d" $y1`
+  m1=`printf "%02d" $m1`
+  d1=`printf "%02d" $d1`
+  h1=`printf "%02d" $h1`
+  min1=`printf "%02d" $min1`
+  s1=`printf "%02d" $s1`
+
+  y2=`printf "%04d" $y2`
+  m2=`printf "%02d" $m2`
+  d2=`printf "%02d" $d2`
+  h2=`printf "%02d" $h2`
+  min2=`printf "%02d" $min2`
+  s2=`printf "%02d" $s2`
+
+  #echo "$y1/$m1/$d1/$h1/$min1-$s1 "++" $y2/$m2/$d2/$h2/$min2-$s2"
+  #exit
+
+  grep_A_flag="$2"
+  ((grep_A_flag--))
+  
+  for year in `eval echo "{$y1..$y2}"`; do
+    for month in `seq -w $m1 $m2`; do
+      #for day in `seq -w 1 $(sed -n "${month}p" /tmp/days_per_month)`; do
+      #echo $(days_per_month 1) `seq -w 1 $(days_per_month $month)`
+
+      for day in `seq -w $d1 $d2`; do
+        for hour in `seq -w $h1 $h2`; do
+          for minute in `seq -w 0 59`; do
+           echo "minute:${year}/$month/$day/$hour/$minute$3"
+            #for second in `seq -w 0 59`; do
+             #echo "$year/$month/$day/$hour/$minute/$second"
+             #x=$day
+            #done
+          done
+        done
+      done
+      #exit 
+    done
+  done | \
+    egrep -A $grep_A_flag "$y/$m/$d/$h/$min"
+
+
+done

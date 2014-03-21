@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+
+if [[ -n "$jmt_pid" && -n "$1" ]]; then
+  mkdir -p "/tmp/jmt/$jmt_pid" && touch "/tmp/jmt/$jmt_pid/$1"
+  echo "/tmp/jmt/$jmt_pid/$1"
+  exit 0
+fi
+
+echo "jmt-tmpfile Usage: tmpfile _name_"
+exit 1
+

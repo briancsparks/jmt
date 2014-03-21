@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+
+die()
+{
+  echo "Must provide filename" 1>&2 
+  exit 1
+}
+
+conf=`jmt gpconffile`
+[[ -z "$conf" ]] && die
+
+replacement=`echo $1 | sed 's/\//\\\\\//g'`
+cat $conf | sed "s/set title.*/set title \"${replacement}\"/" | jmt inplace -o $conf
+
+

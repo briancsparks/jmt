@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+
+[ -z "$port" ] && port="6380"
+[ -n "$r_port" ] && port="$r_port"
+
+redis-cli -p $port EVAL "$(cat $jmt_dir/sh/_redis/_lua/prop_lookup.lua)" 0 "$@"
+
+
