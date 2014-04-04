@@ -170,6 +170,10 @@ var __each = lib.__each = function(a, b, c) {
 
 var __each_ = function(coll, fn, callback) {
 
+  if (coll.length <= 0) {
+    return callback();
+  }
+
   var i = 0, end;
   var indexes, values, errors, hasError = false;
 
@@ -323,7 +327,7 @@ var eachLine = lib.eachLine = function(pattern, options_, eachCallback, finalCal
 
         if (i < l) {
           if (result === 'SG.breathe') {
-            console.log('Breathing');
+            //console.log('Breathing');
             return setTimeout(oneLine, 500);
           }
         
@@ -525,7 +529,8 @@ var RedisDecoder = lib.RedisDecoder = function(callback) {
 
   var remainder = '';
   self.write = function(chunk) {
-    var items = (remainder + chunk).split(/(\r\n|^)\*/);
+    //var items = (remainder + chunk).split(/(\r\n|^)\*/);
+    var items = (remainder + chunk).split(/\r\n/);
     remainder = items.pop();
     return dispatchItems(items);
   };
@@ -534,7 +539,30 @@ var RedisDecoder = lib.RedisDecoder = function(callback) {
     return dispatchItems(remainder.split(/(\r\n|^)\*/));
   };
 
-  var dispatchItems = function(items) {
+  // Parsing Redis bulk-reply string.  The only tricky thing is that bulk strings
+  // are two lines: $6\r\nfoobar\r\n where everything else is one.  Except for the NULL
+  // string, which is one line: $-1\r\n  Actually, arrays are not handled
+  var dispatchItems = function(items_) {
+
+    var items = [];
+    for (var i = 0; i < items_.length; ++i) {
+      if (items_[i][0] !== '$') {
+        items.push(items_[i]);
+        continue;
+      }
+      if (items_[i].length === 3 && items_[i][1] === '-' && items_[i][2] === '1') {
+        items.push(items_[i]);
+        continue;
+      }
+      if (i + 1 < items_.length) {
+        items.push([items_[i], items_[i+1]].join('\r\n'));
+        i++;
+        continue;
+      }
+
+      remainder += items_[i];
+    }
+
     _.each(items, function(item) {
       var lines = item.split('\r\n'), m, len = null, ret = [];
       for (var i = 0; i+1 < lines.length; i += 2) {
@@ -549,6 +577,9 @@ var RedisDecoder = lib.RedisDecoder = function(callback) {
         ret.push(lines[i+1]);
       }
 
+      if (theProfiler) {
+        theProfiler.count('redis-parse');
+      }
       callback(ret.join(' '));
     });
   };
@@ -559,6 +590,8 @@ var Redis = lib.Redis = function(options_) {
   //var options = _.extend((options_ || {}), {port: 6379});
   var options = _.extend({port: 6379}, (options_ || {}));
 
+  self.events = new EventEmitter();
+
   console.log('connecting to ' + options.port, util.inspect(options_));
   var server = require('net').connect({port: options.port}, function(){ });
   var emitter = new EventEmitter();
@@ -566,42 +599,102 @@ var Redis = lib.Redis = function(options_) {
   var ARGV = lib.ARGV();
 
   // Load scripts
-  var loadedScripts = {};
+  var loadedScripts = {}, loadedLibScript = '';
   if (process.env.jmt_dir) {
-    findFiles(path.dirname(__filename) + '/../../sh/_redis/_lua/*.lua', {}, function(err, filenames) {
-      if (err) { return; }
+    __run([
+      function(next) {
+        findFiles(path.dirname(__filename) + '/../../sh/_redis/_lua/_lib/*.lua', {}, function(err, filenames) {
+          if (err) { return; }
 
-      __each(filenames, function(filename, next) {
-        var reportErr = function(err) {
-          if (err) { console.error('Error while loading ' + filename, err); }
-          return next(err);
-        };
+          __each(next, filenames, function(filename, nextFilename) {
+            var reportErr = function(err) {
+              if (err) { console.error('Error while loading ' + filename, err); }
+              return nextFilename(err);
+            };
 
-        return fs.readFile(filename, function(err, contents) {
-          if (err) { return reportErr(err); }
+            return fs.readFile(filename, function(err, contents) {
+              if (err) { return reportErr(err); }
 
-          var cmd = ["redis-cli"];
-          if (options.port) { cmd.push('-p', options.port); }
-          cmd.push('SCRIPT', 'LOAD');
-          //if (ARGV.verbose) { console.error('Loading script: ', cmd, filename); }
-          cmd.push('"' + contents + '"');
-          return exec(cmd.join(' '), function(err, stdout, stderr) {
-            //if (ARGV.verbose) { console.error('Loaded: ', stdout); }
-            //if (ARGV.verbose) { console.error('Stderr: ', stderr); }
-            if (err) { return reportErr(err); }
-
-            loadedScripts[path.basename(filename, '.lua')] = stdout.split("\n")[0];
-            //if (ARGV.verbose) { console.error('loadedScripts: ', loadedScripts); }
-            return next();
+              loadedLibScript += '\n' + contents;
+              return nextFilename();
+            });
           });
         });
       },
+      function(next) {
+        findFiles(path.dirname(__filename) + '/../../sh/_redis/_lua/*.lua', {}, function(err, filenames) {
+          if (err) { return; }
+
+          __each(next, filenames, function(filename, nextFilename) {
+            var reportErr = function(err) {
+              if (err) { console.error('Error while loading ' + filename, err); }
+              process.exit(2);
+              return nextFilename(err);
+            };
+
+            return fs.readFile(filename, function(err, contents) {
+              if (err) { return reportErr(err); }
+
+              var cmd = ["redis-cli"];
+              if (options.port) { cmd.push('-p', options.port); }
+              cmd.push('SCRIPT', 'LOAD');
+              cmd.push('"' + loadedLibScript + '\n' + contents + '"');
+              //if (ARGV.verbose) { console.error('Loading script: ', cmd, filename); }
+              return exec(cmd.join(' '), function(err, stdout, stderr) {
+                //if (ARGV.verbose) { console.error('Loaded: ' + filename, stdout); }
+                //if (ARGV.verbose) { console.error('Stderr: ', stderr); }
+                if (err) { return reportErr(err); }
+                if (stdout.match(/ /)) { return reportErr(stdout); }
+
+                loadedScripts[path.basename(filename, '.lua')] = stdout.split("\n")[0];
+                return nextFilename();
+              });
+            });
+          });
+        });
+      }],
 
       function done() {
-      });
-
-    });
+        // All scripts loaded
+        //if (ARGV.verbose) { console.error('loadedScripts: ', loadedScripts); }
+        self.events.emit('loaded');
+      }
+    );
   }
+
+  self.SCRIPT_LOAD = function(filename /*, prefix_, suffix_, callback*/) {
+    var args = _.rest(arguments);
+    var callback = args.pop();
+    var prefix = args.shift();
+    var suffix = args.shift();
+
+    var reportErr = function(err) {
+      if (err) { console.error('Error while loading ' + filename, err); }
+      return callback(err);
+    };
+
+    var cmd = ["redis-cli"];
+    if (options.port) { cmd.push('-p', options.port); }
+    cmd.push('SCRIPT', 'LOAD');
+    //if (ARGV.verbose) { console.error('Loading script: ', cmd, filename); }
+
+    return fs.readFile(filename, function(err, contents) {
+      if (err) { return callback(err); }
+
+      cmd.push('"' + (prefix || '') + '\n' + contents + (suffix || '') + '"');
+
+      return exec(cmd.join(' '), function(err, stdout, stderr) {
+        //if (ARGV.verbose) { console.error('Loaded: ' + filename, stdout); }
+        //if (ARGV.verbose) { console.error('Stderr: ', stderr); }
+
+        if (err) { return callback(err); }
+        if (stdout.match(/ /)) { return reportErr(stdout); }
+
+        loadedScripts[path.basename(filename, '.lua')] = stdout.split("\n")[0];
+        return callback(null, path.basename(filename, '.lua'));
+      });
+    });
+  };
 
   shutdownHandlers.push(function() {
     server.end();
@@ -612,12 +705,17 @@ var Redis = lib.Redis = function(options_) {
   };
 
   var decoder = new RedisDecoder(function(item) {
-    console.log('decoder', item);
+    if (item[0] === '-') {
+      console.error(item);
+    }
+    //console.log('decoder', item);
     emitter.emit('data', item);
   });
 
+  server.setEncoding('utf8');
   server.on('data', function(chunk) {
-    decoder.write(chunk);
+    //console.log(chunk);
+    //decoder.write(chunk);
   });
 
   self.dbNum = 0;
@@ -629,20 +727,67 @@ var Redis = lib.Redis = function(options_) {
   self.RUN_SCRIPT = function(script) {
     var tries = 0;
     if (!(script in loadedScripts) && tries === 0) {
+      //if (ARGV.verbose) { console.error('DelayRunning: ' + script + ' ' + loadedScripts[script]); }
       return setTimeout(function(){ self.RUN_SCRIPT(script); }, 1000);
     }
 
+    if (!(script in loadedScripts)) {
+      console.error('-----------------ERROR ---------- Calling unknown script: ' + script);
+    }
     //if (ARGV.verbose) { console.error('Running: ' + script + ' ' + loadedScripts[script]); }
     //if (ARGV.verbose) { console.error(arguments); }
     return self._varargs('EVALSHA', loadedScripts[script], arguments);
   };
 
+  //var profileName, profileStart;
+  //self.startProfile = function(name) {
+  //  profileName = name;
+  //  profileStart = new Date().getTime();
+  //  self.DEL('sg_redis_profile:end', profileName);
+  //  self.SET('sg_redis_profile:name', profileName);
+  //  self.SET('sg_redis_profile:start', profileStart);
+  //};
+
+  //self.endProfile = function() {
+  //  var cmd = ["redis-cli"];
+  //  if (options.port) { cmd.push('-p', options.port); }
+
+  //  // Must wait until the end key is removed
+  //  var waitForEndRemoved = function() {
+  //    return exec(cmd.concat(['EXISTS', 'sg_redis_profile:end']).join(' '), function(err, stdout, stderr) {
+  //      console.log(err, stdout);
+  //      console.error(err, stderr);
+
+  //      var end = new Date().getTime();
+  //    });
+  //  };
+  //  return watiForEndRemoved();
+  //  //self.SET('sg_redis_profile:end', end);
+
+  //};
+
   self.SADD_VALUE = function(key, key_of_value) {
     self.RUN_SCRIPT('sadd_value', 2, key_of_value, key);
   };
 
+  self.SADD_VALUE4 = function(prefix, key_of_obj, type, value) {
+    self.RUN_SCRIPT('sadd_value4', 0, prefix, key_of_obj, type, value);
+  };
+
+  self.SET_VALUE = function(prefix, key_of_obj, type, value) {
+    self.RUN_SCRIPT('set_value', 0, prefix, key_of_obj, type, value);
+  };
+
+  self.SET_VALUE_ID = function(prefix, key_of_obj, type, value_key) {
+    self.RUN_SCRIPT('set_value_id', 2, key_of_obj, value_key, prefix, type);
+  };
+
   self.SET = function(key, value) {
     return self.write('SET', self._fixkey(key), value);
+  };
+
+  self.DEL = function(key) {
+    return self.write('DEL', self._fixkey(key));
   };
 
   self.SADD = function(key) {
@@ -679,6 +824,10 @@ var Redis = lib.Redis = function(options_) {
 
   self.SUNIONSTORE = function(destination) {
     return self._varargs('SUNIONSTORE', self._fixkey(destination), arguments);
+  };
+
+  self.ZINCRBY = function() {
+    return self._varargs('ZINCRBY', arguments);
   };
 
   self.KEYS = function(keys, callback) {
@@ -726,6 +875,9 @@ var Redis = lib.Redis = function(options_) {
   };
 
   self.write = function(a) {
+    //if (theProfiler && arguments[0] !== 'ZINCRBY') {
+    //  theProfiler.count('redis' + arguments[0]);
+    //}
     return server.write(redisEncode(arguments));
   };
 
@@ -739,6 +891,19 @@ var RedisNoop = lib.RedisNoop = function(example) {
       self[name] = function() {};
     }
   });
+};
+
+var theProfiler;
+var Profiler = lib.Profiler = function(options_) {
+  var self = this;
+  var options = _.extend({pname:'sg_profile'}, options_);
+  var redis = new Redis(options);
+
+  self.count = function(name, filename_) {
+    return redis.ZINCRBY(options.pname, 1, name+ (filename_ || ''));
+  };
+
+  theProfiler = theProfiler || self;
 };
 
 

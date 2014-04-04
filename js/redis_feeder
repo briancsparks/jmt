@@ -1,0 +1,467 @@
+#!/usr/bin/env node
+/* vim: filetype=javascript :
+ */
+
+var _             = require('underscore');
+var fs            = require('fs');
+var path          = require('path');
+var EventEmitter  = require('events').EventEmitter;
+var exec          = require('child_process').exec;
+
+var sg            = require('./utils/sg');
+var ARGV          = sg.ARGV();
+var redis         = new sg.Redis({port: 6380});
+//var prf           = new sg.Profiler();
+
+var stats = {remainders:[]};
+var hourLineNums = {};
+
+Error.stackTraceLimit = Infinity;
+
+var main = function() {
+
+  var js_filename, lua_filename;
+  var luaScript = '';
+  var luaMoniker = '';
+  var js, jsf;
+  var currSecond, currMinute, currHour, currDay, currMonth, currYear;
+  var closeDayBashScript = path.join(__dirname, '_redis/_sh/closeDay.sh');
+  var pausedTooMuchInput = false, pausedToLetRedisCatchup = false;
+
+  var isPaused = function() {
+    return pausedTooMuchInput || pausedToLetRedisCatchup;
+  };
+
+  sg.__run([
+    function(next) {
+      if (ARGV.args.length < 2) {
+        console.error('Usage: redis_feeder js-file lua-file');
+        process.exit(2);
+      }
+
+      js_filename = ARGV.args[0];
+      lua_filename = ARGV.args[1];
+
+      process.stdin.setEncoding('utf8');
+      return next();
+    },
+
+    function(next) {
+      return redis.events.once('loaded', next);
+    },
+
+    function(next) {
+
+      var Processor = function() {
+        var self = this;
+
+        self.typeName = 'foo';
+
+        self.processFields = function(fields, options, callback) {
+          return callback(null, fields);
+        };
+
+        self.split = function(line) {
+          var ret = line.split(/[ \t]/);
+          ret.unshift(line);
+          return ret;
+        };
+
+        self.ev = new EventEmitter();
+        var internalEv = new EventEmitter();
+
+        self.on = function(eventName, handler) {
+          internalEv.on(eventName, handler);
+        };
+
+        /**
+         *  Generate each of the open functions.
+         */
+        _.each(['openSecond', 'openMinute', 'openHour', 'openDay', 'openMonth', 'openYear'], function(name) {
+          self.ev.on(name, function(a, callback) {
+            //prf.count(name);
+
+            redis.RUN_SCRIPT(luaMoniker, 0, '_'+name, a);
+            if (!internalEv.emit(name, a, callback)) {
+              return callback();
+            }
+            //return internalEv.emit(name, a, callback);
+          });
+
+          self[name] = function() {
+            var args = [luaMoniker, 0, name].concat(Array.prototype.slice.apply(arguments));
+            redis.RUN_SCRIPT.apply(redis, args);
+          };
+        });
+
+        /**
+         *  Generate each of the close functions.
+         */
+        self.ev.on('closeDay', function(curr_day, prev_day, callback) {
+          //prf.count('closeDay');
+          var mainlett = function() {
+            if (!internalEv.emit('closeDay', curr_day, prev_day, after)) {
+              return after(curr_day, prev_day);
+            }
+          };
+
+          var after = function(curr_day, prev_day) {
+            redis.RUN_SCRIPT(luaMoniker, 0, '_closeDay', curr_day, prev_day);
+            if (js.enumType !== 'serialize') {
+              return callback();
+            }
+
+            //console.trace('closeDay');
+            console.log('------------------------------------------ closeDay ' + prev_day + ' ' + curr_day);
+            process.stdin.pause();
+            pausedToLetRedisCatchup = true;
+            return exec([closeDayBashScript, 6380, 0, 'access', prev_day].join(' '), function(err, stdout, stderr) {
+              pausedToLetRedisCatchup = false;
+              if (!isPaused()) {
+                process.stdin.resume();
+              }
+
+              console.log('++++++++++++++++++++++++++++++++++++++++++ done-closeDay');
+              console.log(err);
+              console.log(stdout);
+              console.log(stderr);
+              return callback();
+            });
+          };
+
+          return mainlett();
+        });
+
+        self.closeDay = function(curr_day, prev_day) {
+          redis.RUN_SCRIPT(luaMoniker, 0, 'closeDay', curr_day, prev_day);
+        };
+
+        _.each(['closeSecond', 'closeMinute', 'closeHour', 'closeMonth', 'closeYear'], function(name) {
+          self.ev.on(name, function(a, b, callback) {
+            //prf.count(name);
+            var postProcess = function() {
+
+              //if (name === 'closeHour' || name === 'closeMinute') {
+                var args = [luaMoniker, 0, '_'+name].concat(Array.prototype.slice.apply(arguments));
+                redis.RUN_SCRIPT.apply(redis, args);
+              //}
+              return callback();
+            };
+
+            if (EventEmitter.listenerCount(internalEv, name) > 0) {
+              return internalEv.emit(name, a, b, postProcess);
+            }
+
+            /* otherwise */
+            return postProcess(a, b);
+          });
+
+          self[name] = function() {
+            var args = [luaMoniker, 0, name].concat(Array.prototype.slice.apply(arguments));
+            redis.RUN_SCRIPT.apply(redis, args);
+          };
+        });
+
+      };
+
+      js = new Processor();
+      jsf = require(path.join(process.cwd(), js_filename));
+      return jsf.init(js, function() {
+        return next();
+      });
+    },
+
+    // Load LUA scripts
+    function(next) {
+
+      return fs.readFile(path.join(__dirname, '_redis/_lua/feeder.lua'), function(err, prefix) {
+        return fs.readFile(path.join(__dirname, '_redis/_lua/feeder_suffix.lua'), function(err, suffix) {
+          prefix = "local typename = '" + js.typeName + "'\n" + 
+                   "local enum_type = '" + js.enumType + "'\n" +
+                    prefix;
+          return redis.SCRIPT_LOAD(path.join(process.cwd(), lua_filename), prefix, suffix, function(err, moniker) {
+            luaMoniker = moniker;
+            return next();
+          });
+        });
+      });
+    },
+    
+    // Register type
+    function(next) {
+      var args = [luaMoniker, 0, 'init'].concat(js.types);
+      redis.RUN_SCRIPT.apply(redis, args);
+      return next();
+    }],
+
+
+    function(next) {
+      var dispatchLine = function(line, lineNum, callback) {
+        if (line.length <= 0) { return callback(); }
+
+        var fields, opens = [];
+
+        //prf.count('dispatchLine-top');
+        return sg.__run([
+
+          // --- Split the line and get the time for it
+          function(next) {
+            var m;
+
+            //prf.count('dispatchLine-split');
+            fields = js.split(line.toLowerCase());
+
+            // Make totally sure the date is formatted correctly
+            //   YYYY       / MM    /  DD   / HH    / MM    / SS
+            m = /^(\d\d\d\d)\D(\d\d)\D(\d\d)\D(\d\d)\D(\d\d)\D(\d\d)$/.exec(fields[1]);
+            if (m) {
+              fields.time = [m[1], m[2], m[3], m[4], m[5], m[6]];
+              return next();
+            }
+
+            // TODO - Error
+            console.error('error == ', line.length);
+            return callback(line);
+          },
+
+          // --- Close out any time-frames
+          function(next) {
+            //prf.count('dispatchLine-close');
+            fields[1] = fields.time.join('/');
+            var recordValueMinute = _.first(fields.time, 5).join('/');
+            var recordValueHour, recordValueDay, recordValueMonth, recordValueYear;
+
+            var prevSecond = currSecond;
+
+            // Close the second?
+            var recordValueSecond = fields.time.join('/');
+            if (recordValueSecond !== currSecond) {
+              currSecond = fields.time.join('/');
+              opens.unshift(function(next) {
+                return js.ev.emit('openSecond', currSecond, function() {
+                  return next();
+                });
+              });
+              if (!prevSecond) { return next(); }
+              return js.ev.emit('closeSecond', recordValueSecond, prevSecond, function() {
+                var prevMinute = currMinute;
+
+                // Close the minute?
+                if (recordValueMinute !== currMinute) {
+                  currMinute = _.first(fields.time, 5).join('/');
+                  opens.unshift(function(next) {
+                    return js.ev.emit('openMinute', currMinute, function() {
+                      return next();
+                    });
+                  });
+                  if (!prevMinute) { return next(); }
+                  return js.ev.emit('closeMinute', recordValueMinute, prevMinute, function() {
+                    var prevHour = currHour;
+
+                    // Close the hour?
+                    recordValueHour = _.first(fields.time, 4).join('/');
+                    if (recordValueHour !== currHour) {
+                      currHour = _.first(fields.time, 4).join('/');
+                      hourLineNums[lineNum] = currHour;
+                      opens.unshift(function(next) {
+                        return js.ev.emit('openHour', currHour, function() {
+                          return next();
+                        });
+                      });
+                      if (!prevHour) { return next(); }
+                      return js.ev.emit('closeHour', recordValueHour, prevHour, function() {
+                        var prevDay = currDay;
+
+                        // Close the day?
+                        recordValueDay = _.first(fields.time, 3).join('/');
+                        if (recordValueDay !== currDay) {
+                          currDay = _.first(fields.time, 3).join('/');
+                          opens.unshift(function(next) {
+                            return js.ev.emit('openDay', currDay, function() {
+                              return next();
+                            });
+                          });
+                          if (!prevDay) { return next(); }
+                          return js.ev.emit('closeDay', recordValueDay, prevDay, function() {
+                            var prevMonth = currMonth;
+
+                            // Close the month?
+                            recordValueMonth = _.first(fields.time, 2).join('/');
+                            if (recordValueMonth !== currMonth) {
+                              currMonth = _.first(fields.time, 2).join('/');
+                              opens.unshift(function(next) {
+                                return js.ev.emit('openMonth', currMonth, function() {
+                                  return next();
+                                });
+                              });
+                              if (!prevMonth) { return next(); }
+                              return js.ev.emit('closeMonth', recordValueMonth, prevMonth, function() {
+                                var prevYear = currYear;
+
+                                // Close the year?
+                                recordValueYear = _.first(fields.time, 1).join('/');
+                                if (recordValueYear !== currYear) {
+                                  currYear = _.first(fields.time, 1).join('/');
+                                  opens.unshift(function(next) {
+                                    return js.ev.emit('openYear', currYear, function() {
+                                      return next();
+                                    });
+                                  });
+
+                                  if (!prevYear) { return next(); }
+                                  return js.ev.emit('closeYear', recordValueYear, prevYear, function() {
+                                    return next();
+                                  });
+                                }
+                                return next();
+                              });
+                            }
+                            return next();
+                          });
+                        }
+                        return next();
+                      });
+                    }
+                    return next();
+                  });
+                }
+                return next();
+              });
+            }
+            return next();
+          },
+
+          /**
+           *
+           */
+          function(next) {
+            //prf.count('dispatchLine-processFields');
+
+            // Call the JS to do any additional processing
+            return js.processFields(fields, {skip:{}}, function(err, fields) {
+
+              // Write the item to LUA
+              fields.shift();
+              //console.log(fields);
+              var args = [luaMoniker, 0, 'start_slug'].concat(fields);
+              redis.RUN_SCRIPT.apply(redis, args);
+
+              return next();
+            });
+          },
+          
+          /**
+           *  Open the item
+           */
+          function(next) {
+            //prf.count('dispatchLine-openTimeFrames');
+            
+            // Call the appropriate open functions
+            sg.__each(opens,
+              function(open, next) {
+                return open(next);
+              }, 
+              function done() {
+                return next();
+              }
+            );
+          }],
+          function done() {
+            //prf.count('dispatchLine-done');
+            // Commit the data
+            redis.RUN_SCRIPT(luaMoniker, 0, 'commit_slug');
+            if (hourLineNums[lineNum]) {
+              console.log('done: ', hourLineNums[lineNum]);
+            }
+            return callback();
+          }
+        );
+
+      };
+
+      var shutdown = false;
+      var prf_count = function() {
+        if (!shutdown) {
+          //prf.count.apply(this, arguments);
+        }
+      };
+
+      var lines = [], numLines = 0, numWaited = 0;
+      var dispatchLines = function() {
+        prf_count('dispatchedLine--trying');
+
+        if (lines.length > 0) {
+          prf_count('dispatchedLine--len > 0');
+          if (pausedTooMuchInput && lines.length < 2000) {
+            pausedTooMuchInput = false;
+            if (!isPaused()) {
+              console.log('Resuming at ' + lines.length);
+              process.stdin.resume();
+            }
+          }
+
+          if (isPaused() && pausedTooMuchInput === false) {
+            if ((numWaited % 15) === 0) {
+              console.log("Paused -- not processing lines " + numWaited);
+            }
+            numWaited++;
+            return setTimeout(dispatchLines, 1000);
+          }
+
+          numLines++;
+          var line = lines.shift();
+          prf_count('dispatchedLine--call');
+
+          return dispatchLine(line, numLines, function() {
+            prf_count('dispatchLine-return');
+            if (numLines % 10 !== 0) {
+              return dispatchLines();
+            }
+            setImmediate(dispatchLines);
+          });
+        } else if (shutdown) {
+          //redis.RUN_SCRIPT(luaMoniker, 0, '_closeAll');
+          //setTimeout(function() {
+            sg.shutdown();
+          //}, 5000);
+        }
+      };
+
+      var remainder = '', numChunks = 0;
+      process.stdin.on('data', function(chunk) {
+        var numLinesOnEnter = lines.length;
+        numChunks++;
+        lines = lines.concat((remainder + chunk).split('\n'));
+        remainder = lines.pop();
+        stats.remainders.push(remainder.length);
+        if (lines.length > 20000) {
+          console.log('Pausing at ' + lines.length);
+          process.stdin.pause();
+          pausedTooMuchInput = true;
+        }
+
+        if (numLinesOnEnter === 0) {
+          return dispatchLines();
+        }
+      });
+
+      process.stdin.on('end', function() {
+        lines = lines.concat((remainder).split('\n'));
+        shutdown = true;
+        return dispatchLines();
+      });
+
+      process.on('exit', function() {
+        //console.log('END', numChunks, stats);
+        lines = lines.concat((remainder).split('\n'));
+        shutdown = true;
+        return dispatchLines();
+      });
+    }
+  );
+};
+
+if (__filename === process.argv[1]) {
+  main();
+}
+

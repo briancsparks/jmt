@@ -3,8 +3,8 @@
 port="6380"
 db="0"
 
-[ -n "r_port" ] && port="$r_port"
-[ -n "r_db" ]   && db="$r_db"
+[ -n "$r_port" ] && port="$r_port"
+[ -n "$r_db" ]   && db="$r_db"
 
 # r SINTERslugSTOREguid  and  r SINTERxSTOREy
 if echo "$1" | egrep 'SINTER[a-zA-Z0-9_]+STORE[a-zA-Z0-9_]+' > /dev/null; then

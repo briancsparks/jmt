@@ -6,53 +6,60 @@ db="0"
 [ -n "$r_port" ] && port="$r_port"
 [ -n "$r_db" ]   && db="$r_db"
 
+if ! echo $2 | egrep '^[0-9]+$' > /dev/null; then
+  echo "Must provide number of KEYS"
+  exit 2
+fi
+
 
 script="$jmt_dir/sh/_redis/_lua/$1.lua"
 if [ -f "$script" ]; then
   shift
-  redis-cli -p $port -n $db EVAL "$(cat $script)" "$@"
+  redis-cli -p $port -n $db EVAL "$(cat $jmt_dir/sh/_redis/_lua/_lib/std.lua $script)" "$@"
   exit "$?"
 fi
 
 script="$(pwd)/$1.lua"
 if [ -f "$script" ]; then
   shift
-  redis-cli -p $port -n $db EVAL "$(cat $script)" "$@"
+  redis-cli -p $port -n $db EVAL "$(cat $jmt_dir/sh/_redis/_lua/_lib/std.lua $script)" "$@"
   exit "$?"
 fi
 
 script="$(pwd)/$1_r.lua"
 if [ -f "$script" ]; then
   shift
-  redis-cli -p $port -n $db EVAL "$(cat $script)" "$@"
+  redis-cli -p $port -n $db EVAL "$(cat $jmt_dir/sh/_redis/_lua/_lib/std.lua $script)" "$@"
   exit "$?"
 fi
 
 script="$(pwd)/bin/$1.lua"
 if [ -f "$script" ]; then
   shift
-  redis-cli -p $port -n $db EVAL "$(cat $script)" "$@"
+  redis-cli -p $port -n $db EVAL "$(cat $jmt_dir/sh/_redis/_lua/_lib/std.lua $script)" "$@"
   exit "$?"
 fi
 
 script="$(pwd)/bin/$1_r.lua"
 if [ -f "$script" ]; then
   shift
-  redis-cli -p $port -n $db EVAL "$(cat $script)" "$@"
+  redis-cli -p $port -n $db EVAL "$(cat $jmt_dir/sh/_redis/_lua/_lib/std.lua $script)" "$@"
   exit "$?"
 fi
 
 script="$(pwd)/../bin/$1.lua"
 if [ -f "$script" ]; then
   shift
-  redis-cli -p $port -n $db EVAL "$(cat $script)" "$@"
+  redis-cli -p $port -n $db EVAL "$(cat $jmt_dir/sh/_redis/_lua/_lib/std.lua $script)" "$@"
   exit "$?"
 fi
 
 script="$(pwd)/../bin/$1_r.lua"
 if [ -f "$script" ]; then
   shift
-  redis-cli -p $port -n $db EVAL "$(cat $script)" "$@"
+  redis-cli -p $port -n $db EVAL "$(cat $jmt_dir/sh/_redis/_lua/_lib/std.lua $script)" "$@"
   exit "$?"
 fi
 
+echo "Script not known: $1"
+exit 1

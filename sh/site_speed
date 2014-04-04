@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+
+if [ "`jmt r EXISTS onramp:slug_`" == "0" ]; then
+  echo "Generating onramps..."
+  jmt r SUNIONSTORE onramp:slug_ url:/:slug_ url:/arts:slug_ url:/merchants:slug_
+fi
+
+if [ "`jmt r EXISTS ppers:slug_`" == "0" ]; then
+  echo "Generating POST /projects 'ers..."
+  jmt r SINTER url:/projects:slug_ method:post:slug_ | \
+    while read sid; do echo "slug:$sid:ip_id"; done | xargs -r jmt r MGET | \
+    while read ip_id; do echo "ip_id:$ip_id:slug_"; done | xargs -r jmt r SUNIONSTORE ppers:slug_ ppers:slug_
+fi
+
+#for day in {0..1000}; do
+for day in {2..8}; do
+  day_key="day_id:$day:slug_"
+  if [ "`jmt r EXISTS $day_key`" == "1" ]; then
+
+    for min in {0..1439}; do
+      printf "Processing %s %5d %5d %5d %5d %5d %5d\n" $day_key $min \
+      `jmt r SINTERSTORE min:current:slug_ $day_key n_minute:$min:slug_` \
+      `jmt r_ site_speed_onramp 0` \
+      `jmt r_ site_speed_pprojects 0` \
+      `jmt r SCARD onramp-ip_id_keys` \
+      `jmt r SCARD has_onrampA:slug_`
+
+      if ! jmt math -q "$min % 60"; then
+        jmt r_ site_speed_hour_end 0 $min > /dev/null
+      fi
+    done
+  fi
+  jmt r_ site_speed_hour_end 0 $min > /dev/null
+  jmt r_ site_speed_day_end 0
+
+done
+

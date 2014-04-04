@@ -1,0 +1,21 @@
+#!/usr/bin/env node
+/* vim: filetype=javascript :
+ */
+
+var options = {};
+var argv = process.argv.slice(2);
+if (argv[0] === '-q') {
+  options.quiet = true;
+  argv.shift();
+}
+
+var result = eval(argv.join(' '));
+
+if (!options.quiet) {
+  console.log(result);
+}
+
+if (!result) {
+  process.exit(1);
+}
+

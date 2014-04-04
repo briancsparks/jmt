@@ -24,10 +24,37 @@ var hackersRoots = {
   'cgi-bin': true, plug:true
 };
 
+var _daysPerMonth = {
+  '01':31,
+  '02':28,
+  '03':31,
+  '04':30,
+  '05':31,
+  '06':30,
+  '07':31,
+  '08':31,
+  '09':30,
+  '10':31,
+  '11':30,
+  '12':31
+};
+
+var daysPerMonth = function(year, month) {
+  if (month === '02' && (year % 4) === 0 && (year % 100) !== 0) {
+    return _daysPerMonth[month] + 1;
+  }
+
+  return _daysPerMonth[month];
+};
+
+var datesSent = {};
+
 exports.filters = [
   
   // Categorize the URL [f7] (at least the easy ones)
   function(emitter) {
+    emitter.RUN_SCRIPT('generate_seconds', 0);
+
     return function(item, slug) {
       total++;
 
@@ -48,7 +75,8 @@ exports.filters = [
       };
 
       // Do the bulk of the work by sending to the access_each.lua script
-      emitter.RUN_SCRIPT('access_each2', 1, 'token:slug:id', item[1], item[2], item[3], item[4], item[6], item[9], item[10], slug);
+      emitter.RUN_SCRIPT('access_each', 1, 'token:slug:id', 'item_start', item[1], item[2], item[3], item[4], item[6], item[9], item[10], slug);
+      emitter.SET_VALUE('slug', 'token:slug:id', 'url', path);
 
       var handled = false;
       if (parts[0] === 'projects' || parts[0] === 'project') {
@@ -156,6 +184,8 @@ exports.filters = [
         //  }
         //}
       }
+      //console.log('running item_end');
+      emitter.RUN_SCRIPT('access_each', 1, 'token:slug:id', 'item_end', item[1], item[3]);
     };
   },
 
