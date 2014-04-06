@@ -213,6 +213,17 @@ local function _init(...)
 end
 
 
+local function add_slug_lite(name, value)
+  local slug = curr_slug()
+
+  -- Slug to 'natural' name -- not really necessary
+  set(typename..'_slug', slug, name, value)                   -- access_slug:42:ip              -> 15.80.125.22
+  sadd(name, value, typename..'_slug_', slug)                 -- ip:15.80.125.22:access_slug_   -> 42
+
+  -- Remember that the ip:w.x.y.z is storing the slug
+  sadd(typename..'_type_holder', 'slug', name, value)         -- access_type_holder:slug:ip     -> 15.80.125.22
+end
+
 local function add_slug(name, value, id)
   local slug = curr_slug()
 
@@ -228,17 +239,12 @@ local function add_slug(name, value, id)
   set(name..'_id', id, name, value)                           -- ip_id:55:ip                    -> 15.80.125.22
 
   if enum_type == 'bulk' then
-    -- Slug to 'natural' name -- not really necessary
-    set(typename..'_slug', slug, name, value)                   -- access_slug:42:ip              -> 15.80.125.22
-    sadd(name, value, typename..'_slug_', slug)                 -- ip:15.80.125.22:access_slug_   -> 42
-
-    -- Remember that the ip:w.x.y.z is storing the slug
-    sadd(typename..'_type_holder', 'slug', name, value)         -- access_type_holder:slug:ip     -> 15.80.125.22
+    add_slug_lite(name, value)
   end
 end
 
--- Add a string (essentiall random data)
-local function add_string_slug(name, value, id)
+-- Add a string (essentially random data)
+local function add_slug_attribute(name, value)
   local slug = curr_slug()
 
   -- Slug to 'natural' name
@@ -387,11 +393,6 @@ local function _commit_slug()
         local id = get_id(name, value)
         add_slug(name, value, id)
 
-      elseif ty == 'string' then
-
-        local id = get_id(name, value)
-        add_slug(name, value, id)
-
       elseif (ty == 'ip_addr') then
         -- An IP address.  Convert to int
         local ip = value
@@ -400,11 +401,27 @@ local function _commit_slug()
 
         add_slug(name, ip, id)
 
+      elseif (ty == 'lite_enum') then
+        add_slug_lite(name, value)
+
+      elseif ty == 'string' then
+
+        add_slug_attribute(name, value)
+
+      elseif ty == 'guid' then
+
+        local id = get_id(name, value)
+        add_slug_lite(name, value, id)
+
       elseif (ty == 'ln') then
         -- A number, but with a very large range
         add_ln_slug(name, value, math.floor(math.log(value) * log2inv))
 
       elseif (ty == 'nenum') then
+        -- Like an enum, but since it is already numeric, dont need to generate id (like 200 for http code)
+        add_nenum_slug(name, value, value)
+
+      elseif (ty == 'db_id') then
         -- Like an enum, but since it is already numeric, dont need to generate id (like 200 for http code)
         add_nenum_slug(name, value, value)
       end

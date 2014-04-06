@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+
+port="6380"
+
+[ "$1" == "-f" ] && redis-cli -p $port KEYS '*' > /tmp/keys
+test ! -f /tmp/keys  && redis-cli -p $port KEYS '*' > /tmp/keys
+
+cat /tmp/keys | cut -d: -f1 | histo | sort -rn | cut -d' ' -f2 > /tmp/keys-f1
+cat /tmp/keys-f1
+

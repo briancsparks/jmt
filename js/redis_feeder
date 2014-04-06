@@ -55,6 +55,7 @@ var main = function() {
       var Processor = function() {
         var self = this;
 
+        self._ = _;
         self.typeName = 'foo';
 
         self.processFields = function(fields, options, callback) {
