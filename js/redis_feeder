@@ -27,6 +27,7 @@ var main = function() {
   var currSecond, currMinute, currHour, currDay, currMonth, currYear;
   var closeDayBashScript = path.join(__dirname, '_redis/_sh/closeDay.sh');
   var pausedTooMuchInput = false, pausedToLetRedisCatchup = false;
+  var commitFn = [], deleteSlugFn = [];
 
   var isPaused = function() {
     return pausedTooMuchInput || pausedToLetRedisCatchup;
@@ -172,14 +173,187 @@ var main = function() {
       });
     },
 
+    // Inspect the types
+    function(next) {
+      var m, ty, name;
+      var slugname = js.typeName+'_slug_';
+
+      console.log('---------------------------------');
+      commitFn.push(
+          "local function __commit_slug(...)",
+          "  if abort_commit ~= 0 then",
+          "    return",
+          "  end",
+          "",
+          "  local id, value, holder, a, b, c, d, _, magn",
+          //"  curr_slug = redis.call('GET', 'token:" + js.typeName + "_slug:id')",
+          ""
+          );
+
+      _.each(js.types, function(spec, index_) {
+        var index = index_ + 1;
+        name = spec.name;
+        ty   = spec.ty;
+
+        if (name) {
+          commitFn.push("  -- " + name +": " +ty);
+        }
+
+        if (ty === 'enum') {
+          commitFn.push(
+            "  value = arg[" + index + "]",
+            "  if value ~= '-' then",
+            //"    redis.call('ZINCRBY', 'debug:ty:counts', 1, '" + ty + "')",
+            "    id = get_id('" + name + "', value)",
+            "    holder = '" + name+"_id:'..id..':" +slugname +"'",
+            "    redis.call('SET', '" + js.typeName + "_slug:'..curr_slug..':" + name + "_id', id)",
+            "    redis.call('SADD', holder, curr_slug)",
+            "    redis.call('SADD', 'holder:" +js.typeName +"_slug:key', holder)",
+            "  end"
+            );
+
+          if (js.enumType !== "bulk") {
+            commitFn.push("");
+          }
+
+          deleteSlugFn.push(
+              "'" +js.typeName +"_slug:'..slug..':" +name +"_id'"
+              );
+
+        }
+
+        if (ty === 'ip_addr') {
+          commitFn.push(
+            "  value = arg[" + index + "]",
+            "  if value ~= '-' then",
+            //"    redis.call('ZINCRBY', 'debug:ty:counts', 1, '" + ty + "')",
+            "    local ip = value",
+            "    _, _, a, b, c, d = string.find(ip, '(%d+).(%d+).(%d+).(%d+)')",
+            "    id = (((((a*256) + b)*256) + c)*256 +d)",
+            "    holder = '" + name+"_id:'..id..':" +slugname +"'",
+            "    redis.call('SET', '" + js.typeName + "_slug:'..curr_slug..':" + name + "_id', id)",
+            "    redis.call('SADD', holder, curr_slug)",
+            "    redis.call('SADD', 'holder:" +js.typeName +"_slug:key', holder)",
+            "  end"
+            );
+
+          if (js.enumType !== "bulk") {
+            commitFn.push("");
+          }
+
+          deleteSlugFn.push(
+              "'" +js.typeName +"_slug:'..slug..':" +name +"_id'"
+              );
+
+        }
+
+        if (ty === "lite_enum" || ty === "guid" || ((ty === 'enum' || ty === 'ip_addr') && js.enumType === "bulk")) {
+          commitFn.push(
+            "  value = arg[" + index + "]",
+            "  if value ~= '-' then",
+            //"    redis.call('ZINCRBY', 'debug:ty:counts', 1, '" + ty + "')",
+            "    holder = '" + name+":'..value..':" +slugname +"'",
+            "    redis.call('SET', '" + js.typeName + "_slug:'..curr_slug..':" + name + "', value)",
+            "    redis.call('SADD', holder, curr_slug)",
+            "    redis.call('SADD', 'holder:" +js.typeName +"_slug:key', holder)",
+            "  end",
+            ""
+            );
+
+          deleteSlugFn.push(
+              "'" +js.typeName +"_slug:'..slug..':" +name +"'"
+              );
+
+        }
+
+        else if (ty === "string") {
+          commitFn.push(
+            "  value = arg[" + index + "]",
+            "  if value ~= '-' then",
+            //"    redis.call('ZINCRBY', 'debug:ty:counts', 1, '" + ty + "')",
+            "    redis.call('SET', '" + js.typeName + "_slug:'..curr_slug..':" + name + "', value)",
+            "  end",
+            ""
+            );
+
+          deleteSlugFn.push(
+              "'" +js.typeName +"_slug:'..slug..':" +name +"'"
+              );
+
+        }
+
+        else if (ty === 'ln') {
+          commitFn.push(
+            "  value = arg[" + index + "]",
+            "  if value ~= '-' then",
+            //"    redis.call('ZINCRBY', 'debug:ty:counts', 1, '" + ty + "')",
+            "    magn = math.floor(math.log(tonumber(value))/math.log(2))",
+            "    holder = '" + name+"_magn:'..magn..':" +slugname +"'",
+            "    redis.call('SET', '" + js.typeName + "_slug:'..curr_slug..':" + name + "_magn', magn)",
+            "    redis.call('SET', '" + js.typeName + "_slug:'..curr_slug..':" + name + "', value)",
+            "    redis.call('SADD', holder, curr_slug)",
+            "    redis.call('SADD', 'holder:" +js.typeName +"_slug:key', holder)",
+            "  end",
+            ""
+            );
+
+          deleteSlugFn.push(
+              "'" +js.typeName +"_slug:'..slug..':" +name +"_magn'",
+              "'" +js.typeName +"_slug:'..slug..':" +name +"'"
+              );
+
+        }
+
+        else if (ty === "nenum" || ty === "db_id") {
+          commitFn.push(
+            "  value = arg[" + index + "]",
+            "  if value ~= '-' then",
+            //"    redis.call('ZINCRBY', 'debug:ty:counts', 1, '" + ty + "')",
+            "    holder = '" + name+":'..value..':" +slugname +"'",
+            "    redis.call('SET', '" + js.typeName + "_slug:'..curr_slug..':" + name + "', value)",
+            "    redis.call('SADD', holder, curr_slug)",
+            "    redis.call('SADD', 'holder:" +js.typeName +"_slug:key', holder)",
+            "  end",
+            ""
+            );
+
+          deleteSlugFn.push(
+              "'" +js.typeName +"_slug:'..slug..':" +name +"'"
+              );
+
+        }
+
+      });
+
+      commitFn.push(
+          //"redis.log(redis.LOG_NOTICE, '__commit_slug(2)')",
+          "end"
+          );
+
+      deleteSlugFn = [
+          "local function __delete_slug(slug)",
+          "  redis.pcall('DEL',\n    " + deleteSlugFn.join(",\n    ") + ")",
+          "end"
+          ];
+
+      console.log(commitFn.join('\n'));
+      console.log(deleteSlugFn.join('\n'));
+
+      return next();
+    },
+
     // Load LUA scripts
     function(next) {
 
       return fs.readFile(path.join(__dirname, '_redis/_lua/feeder.lua'), function(err, prefix) {
+
+        prefix =  "local typename = '" + js.typeName + "'\n" +        // I.e. "access"
+                  "local enum_type = '" + js.enumType + "'\n" +       // I.e. "bulk" or "serialize"
+                  deleteSlugFn.join("\n") + "\n" + 
+                  prefix + "\n" +
+                  commitFn.join("\n") + "\n";
+
         return fs.readFile(path.join(__dirname, '_redis/_lua/feeder_suffix.lua'), function(err, suffix) {
-          prefix = "local typename = '" + js.typeName + "'\n" + 
-                   "local enum_type = '" + js.enumType + "'\n" +
-                    prefix;
           return redis.SCRIPT_LOAD(path.join(process.cwd(), lua_filename), prefix, suffix, function(err, moniker) {
             luaMoniker = moniker;
             return next();
@@ -190,7 +364,17 @@ var main = function() {
     
     // Register type
     function(next) {
-      var args = [luaMoniker, 0, 'init'].concat(js.types);
+      var types = [];
+
+      _.each(js.types, function(ty) {
+        if (ty.name && ty.ty) {
+          types.push(ty.name + ':' + ty.ty);
+        } else {
+          types.push('-');
+        }
+      });
+
+      var args = [luaMoniker, 0, 'init'].concat(types);
       redis.RUN_SCRIPT.apply(redis, args);
       return next();
     }],
@@ -367,9 +551,14 @@ var main = function() {
               }
             );
           }],
+
           function done() {
             //prf.count('dispatchLine-done');
             // Commit the data
+
+            var args = [luaMoniker, 0, '_commit_slug'].concat(fields);
+            redis.RUN_SCRIPT.apply(redis, args);
+
             redis.RUN_SCRIPT(luaMoniker, 0, 'commit_slug');
             if (hourLineNums[lineNum]) {
               console.log('done: ', hourLineNums[lineNum]);

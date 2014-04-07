@@ -3,13 +3,41 @@ local cmd = ARGV[1]
 local args = slice(ARGV, 2)
 
 if cmd == 'init' then
-  _init(unpack(args))
-  return init(unpack(args))
+  --_init(unpack(args))
+  --return init(unpack(args))
+  return 1
 elseif cmd == 'start_slug' then
-  return start_slug(unpack(args))
+  --return start_slug(unpack(args))
+  return 2
+
 elseif cmd == 'commit_slug' then
-  commit_slug(unpack(args))
-  return _commit_slug(unpack(args))
+  --commit_slug(unpack(args))
+  --return _commit_slug(unpack(args))
+  return 3
+
+elseif cmd == '_commit_slug' then
+  local _
+
+--local curr_slug, curr_slug_time, curr_slug_date, curr_slug_second, curr_slug_n_second
+  _, _, y, mo, d, h, m, s = string.find(args[1], '(%d%d%d%d).(%d%d).(%d%d).(%d%d).(%d%d).(%d%d)')
+  y = tonumber(y)
+  mo = tonumber(mo)
+  d = tonumber(d)
+  h = tonumber(h)
+  m = tonumber(m)
+  s = tonumber(s)
+
+  curr_slug_time = string.format('%04d/%02d/%02d/%02d/%02d/%02d', y, mo, d, h, m, s)
+  curr_slug_date = string.format('%04d/%02d/%02d', y, mo, d)
+  curr_slug_second = string.format('%02d/%02d/%02d', h, m, s)
+  curr_slug_n_second = (((h*60) +m)*60 + s)
+
+  curr_slug = incr('token', typename..'_slug', 'id')
+  --redis.log(redis.LOG_NOTICE, '__commit_slug(9)')
+
+  __user_commit_slug(unpack(args))
+  __commit_slug2()
+
 
 elseif cmd == '_openSecond' then
   return _openSecond(unpack(args))

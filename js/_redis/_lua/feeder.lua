@@ -1,4 +1,7 @@
 
+local curr_slug, curr_slug_time, curr_slug_date, curr_slug_second, curr_slug_n_second
+local y, mo, d, h, m, s
+
 local log2inv = 1/math.log(2)
 
 local function log(message)
@@ -151,6 +154,7 @@ local function get_id(name, value)
   -- No? Get a new one
   id = incr('token', name, 'id')
   set(name, value, 'id', id)
+  -- Shouldnt there also be a set(name..'_id', id, name, value)
   return id
 end
 
@@ -235,6 +239,7 @@ local function add_slug(name, value, id)
   sadd(typename..'_type_holder', 'slug', name..'_id', id)     -- access_type_holder:slug:ip_id  -> 55
 
   -- Translate between natural and numeric
+  -- TODO: this should have already been done
   set(name, value, name..'_id', id)                           -- ip:15.80.125.22:ip_id          -> 55
   set(name..'_id', id, name, value)                           -- ip_id:55:ip                    -> 15.80.125.22
 
@@ -437,6 +442,23 @@ local function _commit_slug()
 
 end
 
+local curr_slug_expiration = 0
+local function __commit_slug2()
+  redis.call('SET', typename..'_slug:'..curr_slug..':time', curr_slug_time)
+  redis.call('SET', typename..'_slug:'..curr_slug..':date', curr_slug_date)
+  redis.call('SET', typename..'_slug:'..curr_slug..':second', curr_slug_second)
+  redis.call('SET', typename..'_slug:'..curr_slug..':n_second', curr_slug_n_second)
+
+  --redis.log(redis.LOG_NOTICE, curr_slug_expiration)
+  if curr_slug_expiration == 0 then
+    --curr_slug_expiration = future_minute(18, y, mo, d, h, m)
+    curr_slug_expiration = future_minute(180, y, mo, d, h, m)
+  end
+
+  redis.call('SADD', typename..'_delete_at:'..curr_slug_expiration..':slug', curr_slug)
+  local res = redis.call('SET', typename..'_slug:'..curr_slug..':expiration', curr_slug_expiration)
+end
+
 local function handle_delete_delayed(force)
   local i, kind, name, this_key
 
@@ -498,63 +520,66 @@ local function _promote_current_seconds()
     )
 end
 
-local function _closeMinute(m_, prev_m)
-  redis.log(redis.LOG_NOTICE, 'Closing minute: '..prev_m)
-  _promote_current_seconds()
+local delete_delayed_key = typename..'_delete_delayed:slug'
 
-  if enum_type == 'serialize' then
-    local _, kind, name, this_key, name_id, slug, m, y, mo, d, h, min, count
+local function __handle_delete_delayed(force)
+  local _, key, count
 
-    _, _, y, mo, d, h, min = string.find(prev_m, '(%d%d%d%d).(%d%d).(%d%d).(%d%d).(%d%d)')
-    y = tonumber(y)
-    mo = tonumber(mo)
-    d = tonumber(d)
-    h = tonumber(h)
-    min = tonumber(min)
+  --redis.log(redis.LOG_NOTICE, 'hdd: '..force..' '..redis.call('SCARD', delete_delayed_key))
 
-    count = 1
-    if prev_m == m_ then
-      count = 0
-    end
-
-    repeat
-      m = future_minute(count, y, mo, d, h, min)
-
-      local delete_at_key = key(typename..'_delete_at', m, 'slug')
-
-      if redis.call('EXISTS', delete_at_key) == 1 then
-
-        -- Remove the saved slugs
-        local saved_key = key(typename, 'saved', 'slug')
-        if redis.call('EXISTS', saved_key) == 1 then
-          if redis.call('SCARD',  saved_key) > 0 then
-            redis.call('SDIFFSTORE', delete_at_key, delete_at_key, saved_key)
-          end
+  local temp_keys = {}
+  if redis.call('EXISTS', delete_delayed_key) == 1 then
+    if force == 1 or redis.call('SCARD', delete_delayed_key) > 3000 then
+      for _, key in pairs(redis.call('SMEMBERS', delete_delayed_key)) do
+        local count = redis.call('SDIFFSTORE', key, key, delete_delayed_key)
+        if count == 0 then
+          table.insert(temp_keys, key)
         end
-
-        -- Loop over all the types that hold the slugs that we are deleting, and remove 
-        -- them from their sets
-
-        -- Now, remove all the slugs' data
-        for _, name in pairs(smembers(typename, 'field', 'names')) do
-          for _, slug in pairs(redis.call('SMEMBERS', delete_at_key)) do
-            redis.pcall('DEL', key(typename..'_slug', slug, name))
-            redis.pcall('DEL', key(typename..'_slug', slug, name..'_id'))
-            redis.pcall('DEL', key(typename..'_slug', slug, name..'_magn'))
-          end
+        
+        if #temp_keys > 200 then
+          redis.call('DEL', unpack(temp_keys))
+          temp_keys = {}
         end
-
-        redis.call('SUNIONSTORE', typename..'_delete_delayed:slug', typename..'_delete_delayed:slug', delete_at_key)
-        redis.call('SET', 'debug:close_minute', m..' '..count)
-        redis.call('INCR', 'debug:close_minute:count')
-
-        redis.call('DEL', delete_at_key)
       end
 
-      count = count + 1
-    until m == m_
+      if #temp_keys > 0 then
+        redis.call('DEL', unpack(temp_keys))
+      end
 
-    handle_delete_delayed(0)
+      redis.call('DEL', delete_delayed_key)
+    end
+  end
+end
+
+local function __handle_delete_at_key(delete_at_key)
+  local _, key, count
+
+  local temp_keys = {}
+  for _, key in pairs(redis.call('SMEMBERS', delete_at_key)) do
+    __delete_slug(key)
+    table.insert(temp_keys, key)
+    if #temp_keys > 200 then
+      redis.call('SADD', delete_delayed_key, unpack(temp_keys))
+      temp_keys = {}
+    end
+  end
+
+  if #temp_keys > 0 then
+    redis.call('SADD', delete_delayed_key, unpack(temp_keys))
+  end
+
+  redis.call('DEL', delete_at_key)
+
+  __handle_delete_delayed(0)
+end
+
+local function _closeMinute(m_, prev_m)
+
+  redis.log(redis.LOG_NOTICE, 'Closing minute: '..prev_m)
+  --_promote_current_seconds()
+
+  if enum_type == 'serialize' then
+    __handle_delete_at_key(typename..'_delete_at:'..prev_m..':slug')
   end
 end
 
@@ -562,107 +587,31 @@ local function _openHour()
   if exists('keyspace', 'hour_token_start', typename..'_slug') == 1 then
     set('keyspace', 'prev_hour_token_start', typename..'_slug', get('keyspace', 'hour_token_start', typename..'_slug'))
   end
-  --set('keyspace', 'hour_token_start', typename..'_slug', curr_slug()+1)
 end
 
 local function _closeHour(h, prev_h)
+
+  redis.log(redis.LOG_NOTICE, 'Closing hour: ------- '..prev_h)
+
   if enum_type == 'serialize' then
-    local i, kind, name, this_key
-
-    handle_delete_delayed(0)
-    --[[
-    if redis.call('EXISTS', typename..'_delete_delayed:slug') == 1 then
-      for _, kind in pairs(smembers(typename..'_type_holder', 'slug', 'name')) do
-        for _, name in pairs(smembers(typename..'_type_holder', 'slug', kind)) do
-          this_key = key(kind, name, typename..'_slug_')
-          redis.call('SDIFFSTORE', this_key, this_key, typename..'_delete_delayed:slug')
-        end
-      end
-      redis.call('DEL', typename..'_delete_delayed:slug')
-    end
-    --]]
-
-    --[[
-    if exists('keyspace', 'hour_token_close', typename..'_slug') == 1 and exists('keyspace', 'prev_hour_token_start', typename..'_slug') == 1 then
-      local _, name_id, name, prev_start, prev_close, members
-
-      prev_start = get('keyspace', 'prev_hour_token_start', typename..'_slug')
-      prev_close = get('keyspace', 'hour_token_close', typename..'_slug')
-
-      members = smembers(typename, 'field', 'have_name')
-      for _, name_id in pairs(members) do 
-        name = get(typename, 'f'..name_id, 'name')
-
-        for i = prev_start, prev_close do
-          del(typename..'_slug', i, name)
-          del(typename..'_slug', i, name..'_id')
-        end
-      end
-    end
-    --]]
-
-    set('keyspace', 'hour_token_close', typename..'_slug', curr_slug())
+    __handle_delete_at_key(typename..'_delete_at:'..prev_h..':slug')
   end
+  
 end
 
 local function _closeDay(d, prev_d)
   redis.call('SADD', key(typename, 'close_day', 'date'), prev_d)
 
+  redis.log(redis.LOG_NOTICE, 'Closing day: -------- '..prev_d)
+
   if enum_type == 'serialize' then
-    --local _, slug, name
-    --local delete_at_key = key(typename..'_delete_at', prev_d, 'slug')
-
-    --redis.log(redis.LOG_NOTICE, 'Closing minute: '..m)
-
-    --if redis.call('EXISTS', delete_at_key) == 1 then
-
-    --  -- Remove the saved slugs
-    --  local saved_key = key(typename, 'saved', 'slug')
-    --  if redis.call('EXISTS', saved_key) == 1 then
-    --    if redis.call('SCARD',  saved_key) > 0 then
-    --      redis.call('SDIFFSTORE', delete_at_key, delete_at_key, saved_key)
-    --    end
-    --  end
-
-    --  -- Loop over all the types that hold the slugs that we are deleting, and remove 
-    --  -- them from their sets
-
-    --  local names = smembers(typename, 'field', 'names')
-    --  local iterations = 500
-    --  repeat
-    --    local sids = slice(redis.call('SMEMBERS', delete_at_key), 1, 32)
-    --    --local sids  = redis.call('SRANDMEMBER', delete_at_key, 32)
-    --    local items = {}
-    --    local items_id = {}
-    --    for _, slug in pairs(sids) do
-    --      for _, name in pairs(names) do
-    --        table.insert(items, key(typename..'_slug', slug, name))
-    --        table.insert(items_id, key(typename..'_slug', slug, name..'_id'))
-    --      end
-    --    end
-    --    redis.pcall('DEL', unpack(items))
-    --    redis.pcall('DEL', unpack(items_id))
-    --    redis.call('SREM', delete_at_key, unpack(sids))
-    --    iterations = iterations - 1
-    --  until redis.call('SCARD', delete_at_key) == 0 or iterations == 0
-
-    --  -- Now, remove all the slugs' data
-    --  --for _, name in pairs(smembers(typename, 'field', 'names')) do
-    --  --  for _, slug in pairs(redis.call('SMEMBERS', delete_at_key)) do
-    --  --    redis.pcall('DEL', key(typename..'_slug', slug, name))
-    --  --    redis.pcall('DEL', key(typename..'_slug', slug, name..'_id'))
-    --  --  end
-    --  --end
-
-    --  redis.call('SUNIONSTORE', typename..'_delete_delayed:slug', typename..'_delete_delayed:slug', delete_at_key)
-    --  redis.call('DEL', delete_at_key)
-    --end
-    handle_delete_delayed(1)
+    __handle_delete_at_key(typename..'_delete_at:'..prev_d..':slug')
+    __handle_delete_delayed(1)
   end
 end
 
 local function _closeAll()
-  handle_delete_delayed(1)
+  __handle_delete_delayed(1)
 end
 
 -- user content here

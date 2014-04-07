@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 
+
 port="$1"
 db="$2"
 typename="$3"
@@ -26,6 +27,7 @@ for ((;;)); do
 done
 
 echo "Done waiting!  Working on $date" >> /tmp/debug
+exit 0
 
 redis-cli -p $port SMEMBERS "${typename}:field:names" | while read field; do
     redis-cli -p $port SMEMBERS "${typename}_delete_at:$date:slug" | while read sid; do
