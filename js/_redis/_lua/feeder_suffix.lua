@@ -3,22 +3,16 @@ local cmd = ARGV[1]
 local args = slice(ARGV, 2)
 
 if cmd == 'init' then
-  --_init(unpack(args))
-  --return init(unpack(args))
   return 1
 elseif cmd == 'start_slug' then
-  --return start_slug(unpack(args))
   return 2
 
 elseif cmd == 'commit_slug' then
-  --commit_slug(unpack(args))
-  --return _commit_slug(unpack(args))
   return 3
 
 elseif cmd == '_commit_slug' then
   local _
 
---local curr_slug, curr_slug_time, curr_slug_date, curr_slug_second, curr_slug_n_second
   _, _, y, mo, d, h, m, s = string.find(args[1], '(%d%d%d%d).(%d%d).(%d%d).(%d%d).(%d%d).(%d%d)')
   y = tonumber(y)
   mo = tonumber(mo)

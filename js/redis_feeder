@@ -559,7 +559,7 @@ var main = function() {
             var args = [luaMoniker, 0, '_commit_slug'].concat(fields);
             redis.RUN_SCRIPT.apply(redis, args);
 
-            redis.RUN_SCRIPT(luaMoniker, 0, 'commit_slug');
+            //redis.RUN_SCRIPT(luaMoniker, 0, 'commit_slug');
             if (hourLineNums[lineNum]) {
               console.log('done: ', hourLineNums[lineNum]);
             }
