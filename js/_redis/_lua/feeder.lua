@@ -73,6 +73,55 @@ local function del(a, b, c)
   return redis.call('DEL', key(a, b, c))
 end
 
+local function bulk_set(tabl, threshold, ...)
+  if #arg == 2 then
+    table.insert(tabl, arg[1])
+    table.insert(tabl, arg[2])
+  end
+
+  if #tabl > threshold then
+    if #tabl > 4 then
+      redis.log(redis.LOG_NOTICE, #tabl)
+    end
+    redis.call('MSET', unpack(tabl))
+    return {}
+  end
+
+  return tabl
+end
+
+local function bulk_del(tabl, threshold, ...)
+  if #arg == 1 then
+    table.insert(tabl, arg[1])
+  end
+
+  if #tabl > threshold then
+    if #tabl > 2 then
+      redis.log(redis.LOG_NOTICE, #tabl)
+    end
+    redis.call('DEL', unpack(tabl))
+    return {}
+  end
+
+  return tabl
+end
+
+local function bulk_sadd(tabl, threshold, key, ...)
+  if #arg == 1 then
+    table.insert(tabl, arg[1])
+  end
+
+  if #tabl > threshold then
+    if #tabl > 2 then
+      redis.log(redis.LOG_NOTICE, #tabl)
+    end
+    redis.call('SADD', key, unpack(tabl))
+    return {}
+  end
+
+  return tabl
+end
+
 local function convert_keys_to(prefix, members, suffix)
   local ret = {}
   for i, member in pairs(members) do
@@ -276,7 +325,7 @@ end
 
 local function _closeMinute(m_, prev_m)
 
-  redis.log(redis.LOG_NOTICE, 'Closing minute: '..prev_m)
+  --redis.log(redis.LOG_NOTICE, 'Closing minute: '..prev_m)
   --_promote_current_seconds()
 
   if enum_type == 'serialize' then

@@ -330,6 +330,13 @@ var main = function() {
           "end"
           );
 
+      deleteSlugFn.push(
+          "'" +js.typeName +"_slug:'..slug..':date'",
+          "'" +js.typeName +"_slug:'..slug..':time'",
+          "'" +js.typeName +"_slug:'..slug..':second'",
+          "'" +js.typeName +"_slug:'..slug..':n_second'",
+          "'" +js.typeName +"_slug:'..slug..':expiration'"
+          );
       deleteSlugFn = [
           "local function __delete_slug(slug)",
           "  redis.pcall('DEL',\n    " + deleteSlugFn.join(",\n    ") + ")",
