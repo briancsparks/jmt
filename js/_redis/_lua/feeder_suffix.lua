@@ -13,6 +13,9 @@ elseif cmd == 'commit_slug' then
 elseif cmd == '_commit_slug' then
   local _
 
+  day_first_second = tonumber(ARGV[2])
+  args = slice(ARGV, 3)
+
   _, _, y, mo, d, h, m, s = string.find(args[1], '(%d%d%d%d).(%d%d).(%d%d).(%d%d).(%d%d).(%d%d)')
   y = tonumber(y)
   mo = tonumber(mo)
@@ -25,6 +28,7 @@ elseif cmd == '_commit_slug' then
   curr_slug_date = string.format('%04d/%02d/%02d', y, mo, d)
   curr_slug_second = string.format('%02d/%02d/%02d', h, m, s)
   curr_slug_n_second = (((h*60) +m)*60 + s)
+  curr_slug_n_time = day_first_second + (((h*60) +m)*60 + s)
 
   curr_slug = incr('token', typename..'_slug', 'id')
   --redis.log(redis.LOG_NOTICE, '__commit_slug(9)')

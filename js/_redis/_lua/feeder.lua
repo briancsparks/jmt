@@ -1,5 +1,5 @@
 
-local curr_slug, curr_slug_time, curr_slug_date, curr_slug_second, curr_slug_n_second
+local curr_slug, curr_slug_time, curr_slug_date, curr_slug_second, curr_slug_n_second, curr_slug_n_time, day_first_second
 local y, mo, d, h, m, s
 
 local log2inv = 1/math.log(2)
@@ -80,9 +80,11 @@ local function bulk_set(tabl, threshold, ...)
   end
 
   if #tabl > threshold then
-    if #tabl > 4 then
-      redis.log(redis.LOG_NOTICE, #tabl)
-    end
+    --if #arg > 0 then
+    --  redis.log(redis.LOG_NOTICE, 'SET '..tabl[1]..'  '..arg[1])
+    --else
+    --  redis.log(redis.LOG_NOTICE, 'SET '..tabl[1])
+    --end
     redis.call('MSET', unpack(tabl))
     return {}
   end
@@ -96,9 +98,11 @@ local function bulk_del(tabl, threshold, ...)
   end
 
   if #tabl > threshold then
-    if #tabl > 2 then
-      redis.log(redis.LOG_NOTICE, #tabl)
-    end
+    --if #arg > 0 then
+    --  redis.log(redis.LOG_NOTICE, 'DEL '..tabl[1]..'  '..arg[1])
+    --else
+    --  redis.log(redis.LOG_NOTICE, 'DEL '..tabl[1])
+    --end
     redis.call('DEL', unpack(tabl))
     return {}
   end
@@ -112,8 +116,10 @@ local function bulk_sadd(tabl, threshold, key, ...)
   end
 
   if #tabl > threshold then
-    if #tabl > 2 then
-      redis.log(redis.LOG_NOTICE, #tabl)
+    if #arg > 0 then
+      redis.log(redis.LOG_NOTICE, 'SADD '..tabl[1]..'  '..arg[1])
+    --else
+    --  redis.log(redis.LOG_NOTICE, 'SADD '..tabl[1])
     end
     redis.call('SADD', key, unpack(tabl))
     return {}
@@ -245,6 +251,7 @@ local function __commit_slug2()
   redis.call('SET', typename..'_slug:'..curr_slug..':date', curr_slug_date)
   redis.call('SET', typename..'_slug:'..curr_slug..':second', curr_slug_second)
   redis.call('SET', typename..'_slug:'..curr_slug..':n_second', curr_slug_n_second)
+  redis.call('SET', typename..'_slug:'..curr_slug..':n_time', curr_slug_n_time)
 
   --redis.log(redis.LOG_NOTICE, curr_slug_expiration)
   if curr_slug_expiration == 0 then

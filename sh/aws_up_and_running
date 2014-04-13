@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+
+#tmp_dir="/tmp/jmt/aws/$(basename $0)/$$"
+tmp_dir="/tmp/jmt/aws/$(basename $0)"
+echo $tmp_dir
+mkdir -p "$tmp_dir"
+
+just_value()
+{
+  cat - | grep $1 | cut -d: -f2 | tr -d ' ",'
+}
+
+instance_type="m3.xlarge"
+#root_disk="ebs"
+
+for arg in "$@"; do case $arg in
+  --instance-type=*)  instance_type="${arg#*=}";      shift;;
+  --root-disk=*)      root_disk="${arg#*=}";          shift;;
+
+  --) shift; break;;
+  *)                    echo "$arg"; shift;;
+
+esac; done
+
+echo "$instance_type $root_disk"
+
+aws_ami_1204_ebs="ami-5db4a934"
+aws_ami_1204_instance_store="ami-2f8f9246"
+aws_ami_1204_hvm="ami-07809d6e"
+
+if echo "$instance_type" | grep '^r' 2>&1 > /dev/null; then
+  if [ "$root_disk" == "ebs" ]; then
+    echo "$instance_type must not use EBS"
+    exit 2
+  fi
+  root_disk="instance"
+  ami="$aws_ami_1204_hvm"
+else
+  if [ "$root_disk" == "instance" ]; then
+    ami="$aws_ami_1204_instance_store"
+  else
+    ami="$aws_ami_1204_ebs"
+  fi
+fi
+
+key_name="loki-prod-east"
+security_groups="$key_name"
+
+aws ec2 run-instances "--image-id" "$ami" "--count" 1 "--instance-type" "$instance_type" "--key-name" $key_name "--security-groups" "$security_groups" > "$tmp_dir/run_result"
+
+instance_id=`cat "$tmp_dir/run_result" | just_value "InstanceId"`
+echo $instance_id
+
+state="looking"
+while [ "$state" != "running" ]; do
+  if [ "$state" != "running" ]; then echo "$(date)   $state"; fi
+  aws ec2 describe-instances --instance-ids "$instance_id" > "$tmp_dir/describes"
+  state=`cat "$tmp_dir/describes" | grep '"Name"' | just_value '.'`
+  sleep 0.1
+done
+
+dns_name=`cat "$tmp_dir/describes" | just_value PublicDnsName`
+echo $dns_name
+
+## To use ephemeral drives: (Look at what is attached (fdisk), format, mount)
+##sudo fdisk -l
+##
+##sudo mkfs.ext4 /dev/xvdb
+##sudo mkdir /mnt/b
+##sudo mount -t ext4 /dev/xvdb /mnt/b
+
+
+
+
