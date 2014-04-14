@@ -15,6 +15,7 @@ var redis         = new sg.Redis({port: 6380});
 
 var stats = {remainders:[]};
 var hourLineNums = {};
+var slug_day;
 
 Error.stackTraceLimit = Infinity;
 
@@ -343,8 +344,8 @@ var main = function() {
           "end"
           ];
 
-      console.log(commitFn.join('\n'));
-      console.log(deleteSlugFn.join('\n'));
+      //console.log(commitFn.join('\n'));
+      //console.log(deleteSlugFn.join('\n'));
 
       return next();
     },
@@ -391,7 +392,7 @@ var main = function() {
       var dispatchLine = function(line, lineNum, callback) {
         if (line.length <= 0) { return callback(); }
 
-        var fields, slug_day, dateSeconds = {}, opens = [];
+        var fields, dateSeconds = {}, opens = [];
 
         //prf.count('dispatchLine-top');
         return sg.__run([
@@ -401,21 +402,23 @@ var main = function() {
             var m;
 
             //prf.count('dispatchLine-split');
-            fields = js.split(line.toLowerCase());
+            if (_.isArray(fields = js.split(line.toLowerCase()))) {
+              // Make totally sure the date is formatted correctly
+              //   YYYY       / MM    /  DD   / HH    / MM    / SS
+              if ((m = /^(\d\d\d\d)\D(\d\d)\D(\d\d)\D(\d\d)\D(\d\d)\D(\d\d)$/.exec(fields[1]))) {
+                fields.time = [m[1], m[2], m[3], m[4], m[5], m[6]];
+                slug_day = [m[1], m[2], m[3]].join('/');
+                dateSeconds[slug_day] = dateSeconds[slug_day] || (new Date(m[1], m[2]-1, m[3])).getTime() / 1000;
+                return next();
+              }
 
-            // Make totally sure the date is formatted correctly
-            //   YYYY       / MM    /  DD   / HH    / MM    / SS
-            m = /^(\d\d\d\d)\D(\d\d)\D(\d\d)\D(\d\d)\D(\d\d)\D(\d\d)$/.exec(fields[1]);
-            if (m) {
-              fields.time = [m[1], m[2], m[3], m[4], m[5], m[6]];
-              slug_day = [m[1], m[2], m[3]].join('/');
-              dateSeconds[slug_day] = dateSeconds[slug_day] || (new Date(m[1], m[2]-1, m[3])).getTime() / 1000;
-              return next();
+              console.error('Date does not parse: ', line);
+              return callback({error:'EBADDATE', info:line});
             }
 
-            // TODO - Error
-            console.error('error == ', line.length);
-            return callback(line);
+            // Error
+            console.error('error == ', fields, line);
+            return callback({error:fields, info:line});
           },
 
           // --- Close out any time-frames
@@ -537,8 +540,8 @@ var main = function() {
               // Write the item to LUA
               fields.shift();
               fields.unshift(dateSeconds[slug_day]);
-              //console.log(fields);
               var args = [luaMoniker, 0, 'start_slug'].concat(fields);
+              //console.log(fields);
               redis.RUN_SCRIPT.apply(redis, args);
 
               return next();
@@ -620,9 +623,16 @@ var main = function() {
             setImmediate(dispatchLines);
           });
         } else if (shutdown) {
+          var lastLine = oneLastLine();
+          
+          if (lastLine) {
+            return dispatchLine(lastLine, numLines + 1, function() {
+              sg.shutdown();
+            });
+          } 
           //redis.RUN_SCRIPT(luaMoniker, 0, '_closeAll');
           //setTimeout(function() {
-            sg.shutdown();
+          //  sg.shutdown();
           //}, 5000);
         }
       };
@@ -648,6 +658,7 @@ var main = function() {
       process.stdin.on('end', function() {
         lines = lines.concat((remainder).split('\n'));
         shutdown = true;
+        //addOneLastLine();
         return dispatchLines();
       });
 
@@ -657,6 +668,23 @@ var main = function() {
         shutdown = true;
         return dispatchLines();
       });
+
+      var numOneLastLineCalls = 0;
+      var oneLastLine = function() {
+        if (numOneLastLineCalls > 0) { return; }
+        numOneLastLineCalls++;
+
+        var slugDayParts = slug_day.split('/');
+        var nextDay = new Date(slugDayParts[0], slugDayParts[1]-1, slugDayParts[2]);
+        nextDay.setTime(nextDay.getTime() + 24*60*60*1000);
+
+        var line = [[nextDay.getFullYear(), sg.pad(nextDay.getMonth()+1, 2, '0'), sg.pad(nextDay.getDate(), 2, '0')].join('/') + '/00:00:00'];
+        _.each(_.range(/*js.types.length*/12 -1), function(i) {
+          line.push('-');
+        });
+        //lines.push(line.join(' '));
+        return line.join(' ');
+      };
     }
   );
 };

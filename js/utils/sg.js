@@ -86,7 +86,7 @@ var ezJsonParse = lib.ezJsonParse = function(str) {
 var pad = lib.pad = function(str_, width, ch_) {
   var ch = ch_ || ' ';
 
-  var str = str_;
+  var str = str_.toString();
   while(str.length < width) {
     str = ch + str;
   }

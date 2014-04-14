@@ -365,7 +365,9 @@ local function _closeDay(d, prev_d)
 end
 
 local function _closeAll()
-  __handle_delete_delayed(1)
+  if enum_type == 'serialize' then
+    __handle_delete_delayed(1)
+  end
 end
 
 -- user content here
