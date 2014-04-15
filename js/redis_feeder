@@ -10,7 +10,7 @@ var exec          = require('child_process').exec;
 
 var sg            = require('./utils/sg');
 var ARGV          = sg.ARGV();
-var redis         = new sg.Redis({port: 6380});
+var redis         = new sg.Redis({port: 6379});
 //var prf           = new sg.Profiler();
 
 var stats = {remainders:[]};
@@ -118,7 +118,7 @@ var main = function() {
             console.log('------------------------------------------ closeDay ' + prev_day + ' ' + curr_day);
             process.stdin.pause();
             pausedToLetRedisCatchup = true;
-            return exec([closeDayBashScript, 6380, 0, 'access', prev_day].join(' '), function(err, stdout, stderr) {
+            return exec([closeDayBashScript, 6379, 0, 'access', prev_day].join(' '), function(err, stdout, stderr) {
               pausedToLetRedisCatchup = false;
               if (!isPaused()) {
                 process.stdin.resume();
@@ -168,7 +168,28 @@ var main = function() {
       };
 
       js = new Processor();
-      jsf = require(path.join(process.cwd(), js_filename));
+
+      try {
+        var userJsFile = path.join(process.cwd(), js_filename);
+        if (fs.statSync(userJsFile)) {
+          jsf = require(userJsFile);
+        } 
+      } catch(e) {}
+
+      if (!jsf) {
+        try {
+          var userJsFile = js_filename;
+          if (fs.statSync(userJsFile)) {
+            jsf = require(userJsFile);
+          } 
+        } catch(e) {}
+      }
+
+      if (!jsf) {
+        console.error('Cannot find user JS file: ' + userJsFile);
+        process.exit(2);
+      }
+
       return jsf.init(js, function() {
         return next();
       });
@@ -362,7 +383,7 @@ var main = function() {
                   commitFn.join("\n") + "\n";
 
         return fs.readFile(path.join(__dirname, '_redis/_lua/feeder_suffix.lua'), function(err, suffix) {
-          return redis.SCRIPT_LOAD(path.join(process.cwd(), lua_filename), prefix, suffix, function(err, moniker) {
+          return redis.SCRIPT_LOAD(lua_filename, prefix, suffix, function(err, moniker) {
             luaMoniker = moniker;
             return next();
           });
@@ -414,6 +435,11 @@ var main = function() {
 
               console.error('Date does not parse: ', line);
               return callback({error:'EBADDATE', info:line});
+            }
+
+            // Null for fields is not an error, we just skip it
+            if (fields === null) {
+              return callback();
             }
 
             // Error
@@ -536,6 +562,11 @@ var main = function() {
 
             // Call the JS to do any additional processing
             return js.processFields(fields, {skip:{}}, function(err, fields) {
+
+              // Null for fields is not an error, we just don't send it to redis
+              if (fields === null) {
+                return next();
+              }
 
               // Write the item to LUA
               fields.shift();
