@@ -587,16 +587,17 @@ var RedisDecoder = lib.RedisDecoder = function(callback) {
 
 var Redis = lib.Redis = function(options_) {
   var self = this;
-  //var options = _.extend((options_ || {}), {port: 6379});
-  var options = _.extend({port: 6379}, (options_ || {}));
+
+  var ARGV = lib.ARGV();
+
+  //var options = _.extend((options_ || {}), {port: ARGV.port});
+  var options = _.extend({port: ARGV.port}, (options_ || {}));
 
   self.events = new EventEmitter();
 
   console.log('connecting to ' + options.port, util.inspect(options_));
   var server = require('net').connect({port: options.port}, function(){ });
   var emitter = new EventEmitter();
-
-  var ARGV = lib.ARGV();
 
   // Load scripts
   var loadedScripts = {}, loadedLibScript = '';

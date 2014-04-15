@@ -10,7 +10,7 @@ var exec          = require('child_process').exec;
 
 var sg            = require('./utils/sg');
 var ARGV          = sg.ARGV();
-var redis         = new sg.Redis({port: 6379});
+var redis         = new sg.Redis({port: ARGV.port});
 //var prf           = new sg.Profiler();
 
 var stats = {remainders:[]};
@@ -118,7 +118,7 @@ var main = function() {
             console.log('------------------------------------------ closeDay ' + prev_day + ' ' + curr_day);
             process.stdin.pause();
             pausedToLetRedisCatchup = true;
-            return exec([closeDayBashScript, 6379, 0, 'access', prev_day].join(' '), function(err, stdout, stderr) {
+            return exec([closeDayBashScript, ARGV.port, 0, 'access', prev_day].join(' '), function(err, stdout, stderr) {
               pausedToLetRedisCatchup = false;
               if (!isPaused()) {
                 process.stdin.resume();
