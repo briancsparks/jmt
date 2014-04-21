@@ -25,29 +25,37 @@ local function init()
 end
 
 local function __user_commit_slug(...)
-  local method   = arg[6]
-  local action   = arg[15]
-  local pathname = arg[18]
+  if enum_type == 'serialize' then
+    local method   = arg[6]
+    local action   = arg[15]
+    local pathname = arg[18]
 
-  if method == 'post' and pathname == '/projects' then
-    redis.call('SADD', s_cs_post_project, curr_slug)
-    curr_slug_expiration = curr_slug_date
-  elseif pathname == '/arts' or pathname == '/merchants' or pathname == '/' then
-    redis.call('SADD', s_cs_onramp, curr_slug)
-    curr_slug_expiration = curr_slug_date
-  elseif action == 'checkout_success' then
-    redis.call('SADD', s_cs_checkout, curr_slug)
-    curr_slug_expiration = curr_slug_date
-  elseif enum_type == 'serialize' then
-    abort_commit = 1
-  end
+    if method == 'post' and pathname == '/projects' then
+      redis.call('SADD', s_cs_post_project, curr_slug)
+      curr_slug_expiration = curr_slug_date
+    elseif pathname == '/arts' or pathname == '/merchants' or pathname == '/' then
+      redis.call('SADD', s_cs_onramp, curr_slug)
+      curr_slug_expiration = curr_slug_date
+    elseif action == 'checkout_success' then
+      redis.call('SADD', s_cs_checkout, curr_slug)
+      curr_slug_expiration = curr_slug_date
+    elseif enum_type == 'serialize' then
+      abort_commit = 1
+    end
 
-  if abort_commit ~= 1 then
+    if abort_commit ~= 1 then
+      __commit_slug(unpack(arg))
+    end
+  else
     __commit_slug(unpack(arg))
   end
 end
 
 local function closeSecond(s_, prev_s)
+
+  if enum_type ~= 'serialize' then
+    return
+  end
 
   local s = string.match(s_, '(%d%d)$')
 
@@ -127,6 +135,10 @@ end
 
 local function closeMinute(a, b)
 
+  if enum_type ~= 'serialize' then
+    return
+  end
+
   --redis.log(redis.LOG_NOTICE, 'userCloseMinute '..b)
 
   -- These were moved out of the way in closeSecond.  Now, put them onto permanent storage, and delete them below
@@ -177,6 +189,8 @@ local function closeMinute(a, b)
       elapsed = tonumber(stop) - tonumber(start)
       ba = bulk_set(ba, 200, slugkey(slug, 'time_to_pproject'), elapsed)
       ba = bulk_set(ba, 200, slugkey(slug, 'ln_time_to_pproject'), math.floor(math.log(elapsed) * log2inv))
+      ba = bulk_set(ba, 200, slugkey(slug, 'ln2_time_to_pproject'), math.floor(2* math.log(elapsed) * log2inv))
+      ba = bulk_set(ba, 200, slugkey(slug, 'ln4_time_to_pproject'), math.floor(4* math.log(elapsed) * log2inv))
       bb = bulk_sadd(bb, 200, s_has_time_to_pproject, slug)
     end
 

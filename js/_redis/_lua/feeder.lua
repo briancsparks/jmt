@@ -247,20 +247,53 @@ local abort_commit = 0
 
 local curr_slug_expiration = 0
 local function __commit_slug2()
+  local category, value
+
   redis.call('SET', typename..'_slug:'..curr_slug..':time', curr_slug_time)
   redis.call('SET', typename..'_slug:'..curr_slug..':date', curr_slug_date)
-  redis.call('SET', typename..'_slug:'..curr_slug..':second', curr_slug_second)
+  --redis.call('SET', typename..'_slug:'..curr_slug..':second', curr_slug_second)
   redis.call('SET', typename..'_slug:'..curr_slug..':n_second', curr_slug_n_second)
   redis.call('SET', typename..'_slug:'..curr_slug..':n_time', curr_slug_n_time)
 
-  --redis.log(redis.LOG_NOTICE, curr_slug_expiration)
-  if curr_slug_expiration == 0 then
-    --curr_slug_expiration = future_minute(18, y, mo, d, h, m)
-    curr_slug_expiration = future_minute(180, y, mo, d, h, m)
+  --redis.call('SADD', 'time:'..curr_slug_time..':'..typename..'_slug_', curr_slug)
+
+  local second = curr_slug_n_time
+  local minute = math.floor(second / 60)
+  local hour = math.floor(second/3600)
+  local day = math.floor(second/86400)
+
+  redis.call('SADD', 'n_time:'    ..second  ..':'..typename..'_slug_', curr_slug)
+  redis.call('SADD', 'n_minute:'  ..minute  ..':'..typename..'_slug_', curr_slug)
+  redis.call('SADD', 'n_hour:'    ..hour    ..':'..typename..'_slug_', curr_slug)
+  redis.call('SADD', 'n_day:'     ..day     ..':'..typename..'_slug_', curr_slug)
+
+  redis.call('SADD', typename     ..':second:key',  'n_time:'     ..second  ..':'..typename..'_slug_')
+  redis.call('SADD', typename     ..':minute:key',  'n_minute:'   ..minute  ..':'..typename..'_slug_')
+  redis.call('SADD', typename     ..':hour:key',    'n_hour:'     ..hour    ..':'..typename..'_slug_')
+  redis.call('SADD', typename     ..':day:key',     'n_day:'      ..day     ..':'..typename..'_slug_')
+
+  for _, key in pairs(KEYS) do
+    redis.call('SADD', key, curr_slug)
+    redis.call('SADD', typename..':index_keys', key)
+    _, _, category, value = string.find(key, '(.+):(.+):access_slug_')
+
+    redis.call('ZINCRBY', typename..':'..category..':index_type', 1, value)
+    redis.call('SADD', typename..':score:keys', typename..':'..category..':index_type')
+
+    redis.call('SADD', typename..':has_'..category..':'..typename..'_slug_', curr_slug)
+    redis.call('SET', typename..'_slug:'..curr_slug..':'..category, value)
   end
 
-  redis.call('SADD', typename..'_delete_at:'..curr_slug_expiration..':slug', curr_slug)
-  local res = redis.call('SET', typename..'_slug:'..curr_slug..':expiration', curr_slug_expiration)
+  if enum_type == 'serialize' then
+    --redis.log(redis.LOG_NOTICE, curr_slug_expiration)
+    if curr_slug_expiration == 0 then
+      --curr_slug_expiration = future_minute(18, y, mo, d, h, m)
+      curr_slug_expiration = future_minute(180, y, mo, d, h, m)
+    end
+
+    redis.call('SADD', typename..'_delete_at:'..curr_slug_expiration..':slug', curr_slug)
+    local res = redis.call('SET', typename..'_slug:'..curr_slug..':expiration', curr_slug_expiration)
+  end
 end
 
 local function _openSecond(s)
@@ -344,8 +377,35 @@ local function _openHour()
 end
 
 local function _closeHour(h, prev_h)
+  local i, key, scores, scores2, temp
 
   redis.log(redis.LOG_NOTICE, 'Closing hour: ------- '..prev_h)
+  
+  -- Erode scores
+  --redis.log(redis.LOG_NOTICE, typename..':score:keys')
+  for i, key in pairs(redis.call('SMEMBERS', typename..':score:keys')) do
+    --redis.log(redis.LOG_NOTICE, key)
+
+    scores = redis.call('ZREVRANGE', key, 0, -1, 'WITHSCORES')
+    scores2 = {}
+    --redis.log(redis.LOG_NOTICE, unpack(scores))
+    for i, key in pairs(scores) do
+      if i%2 == 0 then
+        temp = math.floor(scores[i] * 0.75)
+        if temp > 0 then
+          table.insert(scores2, temp)
+          table.insert(scores2, scores[i-1])
+          --scores[i] = scores[i-1]
+          --scores[i-1] = temp
+        end
+      end
+    end
+
+    --redis.log(redis.LOG_NOTICE, unpack(scores2))
+    redis.call('DEL', key)
+    redis.call('ZADD', key, unpack(scores2))
+    --redis.log(redis.LOG_NOTICE, unpack(redis.call('ZREVRANGE', key, 0, -1, 'WITHSCORES')))
+  end
 
   if enum_type == 'serialize' then
     __handle_delete_at_key(typename..'_delete_at:'..prev_h..':slug')

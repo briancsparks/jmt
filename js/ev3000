@@ -1,0 +1,243 @@
+#!/usr/bin/env node
+/**
+ * vim: filetype=javascript :
+ */
+
+
+var d = {
+  list:[],
+  rawList:{},
+
+  std:{
+    rawList:{}
+  }
+};
+
+/**
+ *  The outer main function.
+ *
+ *  Creates closure so nothing besides 'd' is at the outer-most scope
+ */
+var main = function() {
+
+  var net         = require('net');
+  var urlLib      = require('url');
+  var sg          = require('./utils/sg');
+  var _           = require('underscore');
+
+  var listeners = {}, numListeners = 0;
+  var results = {};
+  var numResults = 0;
+
+  sg.__run([
+    function(next) {
+
+      sg.Runner = function() {
+        var self = this;
+        var e = self.environment = {};
+
+        var push = function(x) {
+          d.list.push(x);
+        };
+
+        var queue = [];
+        self.enqueue = function(script) {
+          queue.push(script);
+          dispatch();
+        };
+
+        var dispatch = function() {
+          var script, m, lines, resultName;
+
+          if (queue.length > 0) {
+
+            numResults++;
+            resultName = 'r_' + numResults;
+
+            script = queue.shift().join('');
+            lines = script.split('\n');
+            if (lines && lines.length > 0 && (m = /^(\s*[a-z_][a-z0-9_]*)\s*:=\s*(.*)$/i.exec(lines[0]))) {
+              resultName = m[1];
+              lines[0] = m[2];
+            }
+
+            var result = self.exec(lines.join('\n'));
+            return d.std.publishResult(result, {resultName: resultName}, function(err) {
+              setImmediate(dispatch);
+            });
+          }
+        };
+
+        self.exec = function(script) {
+          try {
+            return {response: eval(script)};
+          } catch(err) {
+            return {error: err};
+          }
+        };
+      };
+      return next();
+    },
+    
+    function(next) {
+      d.std.publishResult = function(result, options, callback) {
+        options.resultName = options.resultName || 'r_' + (++numResults);
+        results[options.resultName] = result;
+
+        _.each(listeners, function(listener) {
+          listener.write(options.resultName + ':= ' + result.response + '\n', 'utf8');
+        });
+
+        return callback();
+      };
+
+      d.std.rawList.preProcess = function(chunks, numDataStreams) {
+        var rawList = chunks.join('').split('\n');
+
+        var resultName = 'dstream_r_' + numDataStreams;
+        var first = rawList[0], m;
+        if ((m = /^\s*:::([a-z_][a-z0-9_]*):::/i.exec(first))) {
+          resultName = m[1];
+          rawList.shift();
+          first = null;
+        }
+
+        if (rawList[rawList.length - 1].length === 0) {
+          rawList.pop();
+        }
+
+        return d.std.rawList.process(rawList, {resultName: resultName, first:first}, function(err, list, options) {
+          return d.std.rawList.populate(list, options, function(err) {
+            //return next();
+          });
+        });
+      };
+
+      // The default is AWK inspired
+
+      // Create a bunch of per-field string tables
+      d.std.strings  = d.std.strings || _.map(_.range(99), function(i) {
+        return {};
+      });
+
+      d.std.rawList.process = function(rawList, options, callback) {
+        var list = _.map(rawList, function(record) {
+          //return record.split(/[ \t]+/);
+
+          var fields = record.split(/[ \t]+/);
+          return _.map(fields, function(field, index) {
+            if (/^[0-9]+/.exec(field)) { return parseInt(field, 10); }
+            if (index > maxField) { index = maxField;}
+
+            if (index === 11) {
+              field = '-';
+            } else if (index === 6 || index === 10) {
+              field = field.split('#', 1)[0].split('?', 1)[0];
+              //field = urlLib.parse(field).pathname;
+            }
+
+            d.std.strings[index][field] = (d.std.strings[index][field] || field);
+            return d.std.strings[index][field];
+          });
+        });
+
+        return callback(null, list, options);
+      };
+
+      d.std.rawList.populate = function(list, options, callback) {
+        var slot = d.list.length;
+        d.list[slot] = list;
+        return d.std.publishResult({response: list.length}, options, callback);
+      };
+
+      return next();
+    }],
+
+    /**
+     *  The main function.
+     *
+     *  Create listening ports:
+     *
+     *  1. The 'normal' or 'main' port:  the one that raw JS is sent to.
+     *  2. The data port: data sent to this port is assumed to be records, one per
+     *     line, and white-space separated fields on that line (much like how awk
+     *     automagically views its input.)
+     *  3. The output of 'publishing' port.  Results or other output is sent here.
+     */
+    function main2() {
+      var port        = 9432;
+
+      var runner      = new sg.Runner();
+
+      // ---------- Create the input port---------- 
+      var server = net.createServer();
+      server.on('connection', function(connection) {
+
+        var chunks = [];
+        connection.on('data', function(chunk) {
+          chunks.push(chunk);
+        });
+
+        connection.on('end', function() {
+          runner.enqueue(chunks);
+        });
+
+      });
+
+      console.log('Listening on ' + port);
+      server.listen(port);
+
+      // ---------- Create the data listener---------- 
+      var dataPort = net.createServer();
+      var numDataStreams = 0;
+      dataPort.on('connection', function(connection) {
+
+        var chunks = [];
+        connection.on('data', function(chunk) {
+          chunks.push(chunk.toString());
+        });
+
+        connection.on('end', function() {
+          numDataStreams++;
+          d.std.rawList.preProcess(chunks, numDataStreams);
+        });
+
+      });
+
+      console.log('Listening for data on ' + (port+2));
+      dataPort.listen(port+2);
+
+      // ---------- Create the output publishing port---------- 
+      var publish = net.createServer();
+      publish.on('connection', function(connection) {
+
+        var name;
+
+        numListeners++;
+        name = 'L' + numListeners;
+        listeners[name] = connection;
+
+        var disconnectListener = function() {
+          delete listeners[name];
+          console.log('Removing subscriber: ' + name);
+        };
+
+        connection.on('end', function() {
+          disconnectListener();
+        });
+
+        connection.on('error', function() {
+          disconnectListener();
+        });
+
+        console.log('New subscriber: ' + name);
+      });
+
+      console.log('Publishing on ' + (port + 1));
+      publish.listen(port+1);
+    }
+  );
+};
+
+main();
+

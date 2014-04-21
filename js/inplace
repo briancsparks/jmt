@@ -41,7 +41,10 @@ else {
 
       if (ok) {
         fs.open(outfile, 'w', function(err, fd) {
-          if (err) { console.error("Error opening " + outfile + "... Aborting"); }
+          if (err) {
+            console.error("Error opening " + outfile + "... Aborting");
+            return;
+          }
 
           chunks.forEach(function(chunk) {
             var written = fs.writeSync(fd, chunk, 0, chunk.length, null);

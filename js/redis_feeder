@@ -169,8 +169,9 @@ var main = function() {
 
       js = new Processor();
 
+      var userJsFile;
       try {
-        var userJsFile = path.join(process.cwd(), js_filename);
+        userJsFile = path.join(process.cwd(), js_filename);
         if (fs.statSync(userJsFile)) {
           jsf = require(userJsFile);
         } 
@@ -178,7 +179,7 @@ var main = function() {
 
       if (!jsf) {
         try {
-          var userJsFile = js_filename;
+          userJsFile = js_filename;
           if (fs.statSync(userJsFile)) {
             jsf = require(userJsFile);
           } 
@@ -250,10 +251,16 @@ var main = function() {
             "  if value ~= '-' then",
             //"    redis.call('ZINCRBY', 'debug:ty:counts', 1, '" + ty + "')",
             "    local ip = value",
-            "    _, _, a, b, c, d = string.find(ip, '(%d+).(%d+).(%d+).(%d+)')",
-            "    id = (((((a*256) + b)*256) + c)*256 +d)",
+            "    _, _, id, value = string.find(value, '(%d+):(.+)')",
+            //"    _, _, a, b, c, d = string.find(ip, '(%d+).(%d+).(%d+).(%d+)')",
+            //"    id = (((((a*256) + b)*256) + c)*256 +d)",
             "    holder = '" + name+"_id:'..id..':" +slugname +"'",
             "    redis.call('SET', '" + js.typeName + "_slug:'..curr_slug..':" + name + "_id', id)",
+            "    redis.call('SADD', holder, curr_slug)",
+            "    redis.call('SADD', 'holder:" +js.typeName +"_slug:key', holder)",
+
+            "    holder = '" + name+":'..value..':" +slugname +"'",
+            "    redis.call('SET', '" + js.typeName + "_slug:'..curr_slug..':" + name + "', value)",
             "    redis.call('SADD', holder, curr_slug)",
             "    redis.call('SADD', 'holder:" +js.typeName +"_slug:key', holder)",
             "  end"
@@ -269,7 +276,7 @@ var main = function() {
 
         }
 
-        if (ty === "lite_enum" || ty === "guid" || ((ty === 'enum' || ty === 'ip_addr') && js.enumType === "bulk")) {
+        if (ty === "lite_enum" || ty === "guid" || ((ty === 'enum' /*|| ty === 'ip_addr'*/) && js.enumType === "bulk")) {
           commitFn.push(
             "  value = arg[" + index + "]",
             "  if value ~= '-' then",
@@ -308,10 +315,9 @@ var main = function() {
           commitFn.push(
             "  value = arg[" + index + "]",
             "  if value ~= '-' then",
-            //"    redis.call('ZINCRBY', 'debug:ty:counts', 1, '" + ty + "')",
-            "    magn = math.floor(math.log(tonumber(value))/math.log(2))",
-            "    holder = '" + name+"_magn:'..magn..':" +slugname +"'",
-            "    redis.call('SET', '" + js.typeName + "_slug:'..curr_slug..':" + name + "_magn', magn)",
+            //"    magn = math.floor(math.log(tonumber(value))/math.log(2))",
+            //"    holder = '" + name+"_magn:'..magn..':" +slugname +"'",
+            //"    redis.call('SET', '" + js.typeName + "_slug:'..curr_slug..':" + name + "_magn', magn)",
             "    redis.call('SET', '" + js.typeName + "_slug:'..curr_slug..':" + name + "', value)",
             "    redis.call('SADD', holder, curr_slug)",
             "    redis.call('SADD', 'holder:" +js.typeName +"_slug:key', holder)",
@@ -447,6 +453,18 @@ var main = function() {
             return callback({error:fields, info:line});
           },
 
+          // Do any processing here that should not be done in Lua
+          function(next) {
+            // TODO: better determination that field 3 is IP
+            var m, value;
+            if ((m = /^(.*)\.(.*)\.(.*)\.(.*)$/.exec(fields[3]))) {
+              value = (((((Number(m[1])*256) + Number(m[2]))*256) + Number(m[3]))*256 + Number(m[4]));
+              fields[3] = value + ':' + fields[3];
+            }
+
+            return next();
+          },
+
           // --- Close out any time-frames
           function(next) {
             //prf.count('dispatchLine-close');
@@ -561,7 +579,8 @@ var main = function() {
             //prf.count('dispatchLine-processFields');
 
             // Call the JS to do any additional processing
-            return js.processFields(fields, {skip:{}}, function(err, fields) {
+            return js.processFields(fields, {skip:{}}, function(err, fields_) {
+              fields = fields_;
 
               // Null for fields is not an error, we just don't send it to redis
               if (fields === null) {
@@ -571,7 +590,19 @@ var main = function() {
               // Write the item to LUA
               fields.shift();
               fields.unshift(dateSeconds[slug_day]);
-              var args = [luaMoniker, 0, 'start_slug'].concat(fields);
+
+              fields.indexes = fields.indexes || [];
+
+              var args = [luaMoniker];
+
+              args.push(fields.indexes.length);
+              _.each(fields.indexes, function(index) {
+                args.push(index + ':' + js.typeName + '_slug_');
+              });
+
+              args.push('start_slug');
+              args = args.concat(fields);
+
               //console.log(fields);
               redis.RUN_SCRIPT.apply(redis, args);
 
@@ -600,10 +631,26 @@ var main = function() {
             //prf.count('dispatchLine-done');
             // Commit the data
 
-            var args = [luaMoniker, 0, '_commit_slug'].concat(fields);
-            redis.RUN_SCRIPT.apply(redis, args);
+            if (fields) {
+              var args = [luaMoniker];
 
-            //redis.RUN_SCRIPT(luaMoniker, 0, 'commit_slug');
+              args.push(fields.indexes.length);
+              _.each(fields.indexes, function(index) {
+                args.push(index + ':' + js.typeName + '_slug_');
+              });
+
+              args.push('_commit_slug');
+              args = args.concat(fields);
+
+              //console.log(fields);
+              redis.RUN_SCRIPT.apply(redis, args);
+
+              //var args = [luaMoniker, 0, '_commit_slug'].concat(fields);
+              //redis.RUN_SCRIPT.apply(redis, args);
+
+              //redis.RUN_SCRIPT(luaMoniker, 0, 'commit_slug');
+            }
+
             if (hourLineNums[lineNum]) {
               console.log('done: ', hourLineNums[lineNum]);
             }
