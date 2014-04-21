@@ -9,8 +9,8 @@ exports.init = function(context, callback) {
 
   var _ = context._;
 
-  context.enumType = 'serialize';
-  //context.enumType = 'bulk';
+  //context.enumType = 'serialize';
+  context.enumType = 'bulk';
 
   var bulkTypes = [
     /* 1: */ {name:'time', ty:'time'},
