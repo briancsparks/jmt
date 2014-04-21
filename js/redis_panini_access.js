@@ -9,8 +9,8 @@ exports.init = function(context, callback) {
 
   var _ = context._;
 
-  context.enumType = 'serialize';
-  //context.enumType = 'bulk';
+  //context.enumType = 'serialize';
+  context.enumType = 'bulk';
 
   var bulkTypes = [
     /* 1: */ {name:'time', ty:'time'},
@@ -69,7 +69,10 @@ exports.init = function(context, callback) {
   var pageNames = {
     '/'           : true,
     '/arts'       : true,
-    '/merchants'  : true
+    '/merchants'  : true,
+    '/cart'       : true,
+    '/cards'      : true,
+    '/projects'   : true
   };
 
   var modelNames_wId = {
@@ -143,13 +146,9 @@ exports.init = function(context, callback) {
     var url, parts, urlUnderstood = false;
     //console.log(pathname);
 
-    if (/^\/generatetextlayer/i.exec(pathname)) {
+    // Lots of assets, very little info
+    if (/^\/(assets|js|api)\/?/i.exec(pathname)) {
       return callback(null, null);
-    }
-
-    if (!options.skip.pathname) {
-      url   = url   || parseUrl(pathname, url, parts).url;
-      fields[18] = url.pathname;
     }
 
     if (!options.skip.model) {
@@ -158,16 +157,6 @@ exports.init = function(context, callback) {
 
       if (modelNames[parts[0]]) {
         fields[14] = parts[0];
-        urlUnderstood = true;
-      } 
-    }
-
-    if (!options.skip.page) {
-      url   = url   || parseUrl(pathname, url, parts).url;
-      parts = parts || parseUrl(pathname, url, parts).parts;
-
-      if (pageNames['/'+parts[0]]) {
-        fields[19] = parts[0];
         urlUnderstood = true;
       } 
     }
@@ -183,6 +172,16 @@ exports.init = function(context, callback) {
           fields[15] = parts[2];
         }
       }
+    }
+
+    if (!options.skip.page) {
+      url   = url   || parseUrl(pathname, url, parts).url;
+      parts = parts || parseUrl(pathname, url, parts).parts;
+
+      if (pageNames['/'+parts[0]] /*&& !(fields[15] !== '-' && fields[14] !== '-')*/) {
+        fields[19] = '/'+parts[0];
+        urlUnderstood = true;
+      } 
     }
 
     if (!options.skip.model_id) {
@@ -203,6 +202,13 @@ exports.init = function(context, callback) {
       }
     }
 
+    if (!options.skip.pathname) {
+      if (fields[19] !== '-' && fields[14] !== '-') {
+        url   = url   || parseUrl(pathname, url, parts).url;
+        fields[18] = url.pathname;
+      }
+    }
+
     if (!options.skip.unknown) {
       url   = url   || parseUrl(pathname, url, parts).url;
 
@@ -211,25 +217,83 @@ exports.init = function(context, callback) {
       }
     }
 
+    // field 11 is referer.  if it os from our domain, it is a refPage
+    var refPage = null;
+    if (!options.skip.refPage) {
+      var referer = urlLib.parse(fields[11]);
+      if (/twosmiles\.com$/i.exec(referer.hostname)) {
+        var refParts = _.rest(referer.pathname.split('/'));
+        if (pageNames['/'+refParts[0]]) {
+          fields.indexes = fields.indexes || [];
+          refPage = '/'+refParts[0];
+          fields.indexes.push('ref_page:' + refPage);
+        }
+      }
+    }
+
+    if (/^\/generatetextlayer/i.exec(pathname)) {
+      url   = url   || parseUrl(pathname, url, parts).url;
+      parts = parts || parseUrl(pathname, url, parts).parts;
+
+      if (refPage !== '/cart') {
+        return callback(null, null);
+      }
+
+      fields.indexes = fields.indexes || [];
+      fields.indexes.push('generatetextlayer:' + refPage || 'free');
+
+      if (url.query) {
+        if (url.query.art_id)           { fields.indexes.push('art_id:' + url.query.art_id); }
+        if (url.query.gift_card_value)  { fields.indexes.push('gift_card_value:' + url.query.gift_card_value); }
+        if (url.query.merchant_id)      { fields.indexes.push('merchant_id:' + url.query.merchant_id); }
+      }
+    }
+
+    //// These have the most impact -- doing math in lua
+    //fields[3] = 
+    //fields[4] = 
+    //fields[10] = 
+
+    //// Moderate -- the bigger strings
+    //fields[9] = 
+    //fields[18] = 
+
+    //// These have very little:
+    //fields[2] = 
+    //fields[5] = 
+
+    //// Moderate to small
+    //fields[6] = 
+    //fields[7] =     /*url*/
+    //fields[8] = 
+    //fields[11] = 
+    //fields[12] = 
+    //fields[13] = 
+    //fields[14] = 
+    //fields[15] = 
+    //fields[16] = 
+    //fields[17] = 
+    //fields[19] = 
+    //'-';
     return callback(null, fields);
   };
 
   context.on('closeSecond', function(a, b, callback) {
-    //if (context.enumType === 'bulk') { return callback(a, b); }
+    if (context.enumType === 'bulk') { return callback(a, b); }
     context.closeSecond(a, b);
 
     return callback(a, b);
   });
 
   context.on('closeMinute', function(a, b, callback) {
-    //if (context.enumType === 'bulk') { return callback(a, b); }
+    if (context.enumType === 'bulk') { return callback(a, b); }
     context.closeMinute(a, b);
 
     return callback(a, b);
   });
 
   context.on('closeDay', function(a, b, callback) {
-    //if (context.enumType === 'bulk') { return callback(a, b); }
+    if (context.enumType === 'bulk') { return callback(a, b); }
     context.closeDay(a, b);
 
     return callback(a, b);

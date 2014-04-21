@@ -37,8 +37,8 @@ sg.__run([
       if (arg === '--') { onlyFilenames = true; return nextArg(); }
 
       if (!onlyFilenames) {
-        if ((m = /--(.+)/.exec(arg))) { options[m[1]] = true; return nextArg(); }
-        if ((m = /-(.+)/.exec(arg))) { options[m[1]] = true; return nextArg(); }
+        if ((m = /^--(.+)/.exec(arg))) { options[m[1]] = true; return nextArg(); }
+        if ((m = /^-(.+)/.exec(arg))) { options[m[1]] = true; return nextArg(); }
         if (!options.format) { setFormat(arg); return nextArg(); }
       }
 
@@ -73,7 +73,7 @@ var watch = function(filename) {
     }
 
     var message = sg.printf(options.format || "%s1\n", msgFilename);
-    logit(message.replace('\n', ''));
+    logit('spy-log: ' + message.replace('\n', ''));
 
     process.stdout.write(message);
   });

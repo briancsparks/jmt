@@ -95,7 +95,7 @@ var pad = lib.pad = function(str_, width, ch_) {
 
 var printf = lib.printf = function(fmt) {
   var params = _.rest(arguments);
-  return fmt.replace(/(%([0-9]*)s([0-9]))/g, function(m, p, w, argNum) {
+  var theReplacement = fmt.replace(/(%([0-9]*)s([0-9]))/g, function(m, p, w, argNum) {
     var repl = params[argNum-1];
     if (w.length > 0) {
       if (w[0] === '0') {
@@ -107,6 +107,8 @@ var printf = lib.printf = function(fmt) {
 
     return repl;
   });
+
+  return theReplacement;
 };
 
 var context = lib.context = function(key, def) {
