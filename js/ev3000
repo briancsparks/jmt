@@ -161,13 +161,13 @@ var main = function() {
 
       // Stats
       var dumpStats = function() {
-        console.error(_.map(d.std.strings, function(stringPool, index) {
+        console.error(_.map(d.std.rawList.strings, function(stringPool, index) {
             return _.keys(stringPool).length;
           }).join(', ')
         );
 
         setTimeout(dumpStats, 1000);
-      }
+      };
       //dumpStats();
 
     }

@@ -76,6 +76,9 @@ var watch = function(filename) {
     logit('spy-log: ' + message.replace('\n', ''));
 
     process.stdout.write(message);
+    if (options.once) {
+      process.exit(0);
+    }
   });
 };
 

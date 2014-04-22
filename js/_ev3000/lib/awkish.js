@@ -2,6 +2,13 @@
 (function() {
   d.std.rawList = {};
 
+  // Create a bunch of per-field string tables
+  d.std.rawList.strings  = d.std.rawList.strings || _.map(_.range(21), function(i) {
+    return {};
+  });
+
+  var maxField = d.std.rawList.strings.length - 1;
+
   d.std.rawList.preProcess = function(chunks, numDataStreams) {
     var startTime = new Date();
     var rawList = chunks.join('').split('\n');
@@ -32,29 +39,45 @@
   };
 
   // The default is AWK inspired
-
-  // Create a bunch of per-field string tables
-  d.std.strings  = d.std.strings || _.map(_.range(21), function(i) {
-    return {};
-  });
-
-  var maxField = d.std.strings.length - 1;
   d.std.rawList.process = function(rawList, options, callback) {
-    var list = _.map(rawList, function(record) {
-      //return record.split(/[ \t]+/);
+    var list = [];
+    _.each(rawList, function(record__) {
 
-      var fields = _.map(record.split(/[ \t]+/), function(field, index) {
-        if (/^[0-9]+/.exec(field)) { return parseInt(field, 10); }
-        if (index > maxField) { index = maxField;}
-
-        d.std.strings[index][field] = (d.std.strings[index][field] || field);
-        return d.std.strings[index][field];
-      });
-
-      return fields;
+      var record_ = record__.split(/[ \t]+/);
+      var record = d.std.rawList.filterRecord(record_);
+      if (record) {
+        var fields = d.std.rawList.processRecord(record, record_);
+        list.push(d.std.rawList.filterFields(fields));
+      }
     });
 
     return callback(null, list, options);
+  };
+
+  d.std.rawList.processRecord = function(record, record_) {
+    var fields = _.map(record, function(field_, index) {
+      if (field_ !== null) { return field_; }
+      var field = record_[index];
+
+      if (/^[0-9]+/.exec(field)) { return parseInt(field, 10); }
+      if (index > maxField) { index = maxField;}
+
+      field = d.std.rawList.strings[index][field] = (d.std.rawList.strings[index][field] || field);
+      return field;
+    });
+
+    return fields;
+  };
+
+  var empty = [];
+  d.std.rawList.filterRecord = function(record) {
+    var len = record.length;
+    var ret = empty[len] = empty[len] || _.map(record, function() { return null; });
+    return ret;
+  };
+
+  d.std.rawList.filterFields = function(fields) {
+    return fields;
   };
 
   d.std.rawList.populate = function(list, options, callback) {
