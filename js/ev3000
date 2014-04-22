@@ -5,12 +5,8 @@
 
 
 var d = {
-  list:[],
-  rawList:{},
-
-  std:{
-    rawList:{}
-  }
+  list  : [],
+  std   : {}
 };
 
 /**
@@ -86,76 +82,15 @@ var main = function() {
 
         var output = options.resultName + ':= ' + result.response;
         if (options.startTime && /^[0-9]+$/.exec(result.response)) {
-          output += '  [' + (parseInt(result.response, 10) * 1000 / (new Date() - options.startTime)) + ']\n';
+          output += '  [' + (parseInt(result.response, 10) * 1000 / (new Date() - options.startTime)) + ']';
         }
+        output += '\n';
 
         _.each(listeners, function(listener) {
           listener.write(output, 'utf8');
         });
 
         return callback();
-      };
-
-      d.std.rawList.preProcess = function(chunks, numDataStreams) {
-        var startTime = new Date();
-        var rawList = chunks.join('').split('\n');
-
-        var resultName = 'dstream_r_' + numDataStreams;
-        var first = rawList[0], m;
-        if ((m = /^\s*:::([a-z_][a-z0-9_]*):::/i.exec(first))) {
-          resultName = m[1];
-          rawList.shift();
-          first = null;
-        }
-
-        if (rawList[rawList.length - 1].length === 0) {
-          rawList.pop();
-        }
-
-        var options = {
-          resultName  : resultName, 
-          first       : first,
-          startTime   : startTime
-        };
-
-        return d.std.rawList.process(rawList, options, function(err, list, options) {
-          return d.std.rawList.populate(list, options, function(err) {
-            //return next();
-          });
-        });
-      };
-
-      // The default is AWK inspired
-
-      // Create a bunch of per-field string tables
-      d.std.strings  = d.std.strings || _.map(_.range(21), function(i) {
-        return {};
-      });
-
-      var maxField = d.std.strings.length - 1;
-      d.std.rawList.process = function(rawList, options, callback) {
-        var list = _.map(rawList, function(record) {
-          //return record.split(/[ \t]+/);
-
-          var fields = _.map(record.split(/[ \t]+/), function(field, index) {
-            if (/^[0-9]+/.exec(field)) { return parseInt(field, 10); }
-            if (index > maxField) { index = maxField;}
-
-            d.std.strings[index][field] = (d.std.strings[index][field] || field);
-            return d.std.strings[index][field];
-          });
-
-          return fields;
-        });
-
-        return callback(null, list, options);
-      };
-      //d.std.rawList.process = d.std.rawList.processApacheAccess;
-
-      d.std.rawList.populate = function(list, options, callback) {
-        var slot = d.list.length;
-        d.list[slot] = list;
-        return d.std.publishResult({response: list.length}, options, callback);
       };
 
       return next();
@@ -167,16 +102,13 @@ var main = function() {
      *  Create listening ports:
      *
      *  1. The 'normal' or 'main' port:  the one that raw JS is sent to.
-     *  2. The data port: data sent to this port is assumed to be records, one per
-     *     line, and white-space separated fields on that line (much like how awk
-     *     automagically views its input.)
-     *  3. The output of 'publishing' port.  Results or other output is sent here.
+     *  2. The output of 'publishing' port.  Results or other output is sent here.
      */
     function main2() {
       var ARGV        = sg.ARGV();
-      var port        = parseInt(ARGV.port || 9432, 10);
-
       var runner      = new sg.Runner();
+
+      d.std.port      = parseInt(ARGV.port || 9432, 10);
 
       // ---------- Create the input port---------- 
       var server = net.createServer();
@@ -193,30 +125,9 @@ var main = function() {
 
       });
 
-      console.log('Listening on ' + port);
-      server.listen(port);
+      console.log('Listening on ' + d.std.port);
+      server.listen(d.std.port);
       //server.listen('/tmp/ev3000_server');
-
-      // ---------- Create the data listener---------- 
-      var dataPort = net.createServer();
-      var numDataStreams = 0;
-      dataPort.on('connection', function(connection) {
-
-        var chunks = [];
-        connection.on('data', function(chunk) {
-          chunks.push(chunk.toString());
-        });
-
-        connection.on('end', function() {
-          numDataStreams++;
-          d.std.rawList.preProcess(chunks, numDataStreams);
-        });
-
-      });
-
-      console.log('Listening for data on ' + (port+2));
-      dataPort.listen(port+2);
-      //dataPort.listen('/tmp/ev3000_data');
 
       // ---------- Create the output publishing port---------- 
       var publish = net.createServer();
@@ -244,8 +155,8 @@ var main = function() {
         console.log('New subscriber: ' + name);
       });
 
-      console.log('Publishing on ' + (port + 1));
-      publish.listen(port+1);
+      console.log('Publishing on ' + (d.std.port + 1));
+      publish.listen(d.std.port+1);
       //publish.listen('/tmp/ev3000_publish');
 
       // Stats
