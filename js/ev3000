@@ -84,14 +84,20 @@ var main = function() {
         options.resultName = options.resultName || 'r_' + (++numResults);
         results[options.resultName] = result;
 
+        var output = options.resultName + ':= ' + result.response;
+        if (options.startTime && /^[0-9]+$/.exec(result.response)) {
+          output += '  [' + (parseInt(result.response, 10) * 1000 / (new Date() - options.startTime)) + ']\n';
+        }
+
         _.each(listeners, function(listener) {
-          listener.write(options.resultName + ':= ' + result.response + '\n', 'utf8');
+          listener.write(output, 'utf8');
         });
 
         return callback();
       };
 
       d.std.rawList.preProcess = function(chunks, numDataStreams) {
+        var startTime = new Date();
         var rawList = chunks.join('').split('\n');
 
         var resultName = 'dstream_r_' + numDataStreams;
@@ -106,7 +112,13 @@ var main = function() {
           rawList.pop();
         }
 
-        return d.std.rawList.process(rawList, {resultName: resultName, first:first}, function(err, list, options) {
+        var options = {
+          resultName  : resultName, 
+          first       : first,
+          startTime   : startTime
+        };
+
+        return d.std.rawList.process(rawList, options, function(err, list, options) {
           return d.std.rawList.populate(list, options, function(err) {
             //return next();
           });
@@ -120,6 +132,7 @@ var main = function() {
         return {};
       });
 
+      var maxField = d.std.strings.length - 1;
       d.std.rawList.process = function(rawList, options, callback) {
         var list = _.map(rawList, function(record) {
           //return record.split(/[ \t]+/);
@@ -182,6 +195,7 @@ var main = function() {
 
       console.log('Listening on ' + port);
       server.listen(port);
+      //server.listen('/tmp/ev3000_server');
 
       // ---------- Create the data listener---------- 
       var dataPort = net.createServer();
@@ -202,6 +216,7 @@ var main = function() {
 
       console.log('Listening for data on ' + (port+2));
       dataPort.listen(port+2);
+      //dataPort.listen('/tmp/ev3000_data');
 
       // ---------- Create the output publishing port---------- 
       var publish = net.createServer();
@@ -231,6 +246,7 @@ var main = function() {
 
       console.log('Publishing on ' + (port + 1));
       publish.listen(port+1);
+      //publish.listen('/tmp/ev3000_publish');
 
       // Stats
       var dumpStats = function() {
