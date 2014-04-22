@@ -116,33 +116,57 @@ var main = function() {
       // The default is AWK inspired
 
       // Create a bunch of per-field string tables
-      d.std.strings  = d.std.strings || _.map(_.range(99), function(i) {
+      d.std.strings  = d.std.strings || _.map(_.range(21), function(i) {
         return {};
       });
+      var maxField = d.std.strings.length - 1;
 
-      d.std.rawList.process = function(rawList, options, callback) {
+      d.std.rawList.processApacheAccess = function(rawList, options, callback) {
         var list = _.map(rawList, function(record) {
           //return record.split(/[ \t]+/);
 
-          var fields = record.split(/[ \t]+/);
-          return _.map(fields, function(field, index) {
+          var fields = _.map(record.split(/[ \t]+/), function(field, index) {
             if (/^[0-9]+/.exec(field)) { return parseInt(field, 10); }
             if (index > maxField) { index = maxField;}
 
             if (index === 11) {
               field = '-';
-            } else if (index === 6 || index === 10) {
-              field = field.split('#', 1)[0].split('?', 1)[0];
-              //field = urlLib.parse(field).pathname;
+            }
+            else if (index === 6) {
+              field = _.first(field.split('#', 1)[0].split('?', 1)[0].split('/'), 2).join('/');
+            }
+            else if (index === 10) {
+              field = _.first(field.split('#', 1)[0].split('?', 1)[0].split('/'), 4).join('/');
             }
 
             d.std.strings[index][field] = (d.std.strings[index][field] || field);
             return d.std.strings[index][field];
           });
+
+          return fields;
         });
 
         return callback(null, list, options);
       };
+
+      d.std.rawList.process = function(rawList, options, callback) {
+        var list = _.map(rawList, function(record) {
+          //return record.split(/[ \t]+/);
+
+          var fields = _.map(record.split(/[ \t]+/), function(field, index) {
+            if (/^[0-9]+/.exec(field)) { return parseInt(field, 10); }
+            if (index > maxField) { index = maxField;}
+
+            d.std.strings[index][field] = (d.std.strings[index][field] || field);
+            return d.std.strings[index][field];
+          });
+
+          return fields;
+        });
+
+        return callback(null, list, options);
+      };
+      d.std.rawList.process = d.std.rawList.processApacheAccess;
 
       d.std.rawList.populate = function(list, options, callback) {
         var slot = d.list.length;
@@ -165,7 +189,8 @@ var main = function() {
      *  3. The output of 'publishing' port.  Results or other output is sent here.
      */
     function main2() {
-      var port        = 9432;
+      var ARGV        = sg.ARGV();
+      var port        = parseInt(ARGV.port || 9432, 10);
 
       var runner      = new sg.Runner();
 
@@ -235,6 +260,18 @@ var main = function() {
 
       console.log('Publishing on ' + (port + 1));
       publish.listen(port+1);
+
+      // Stats
+      var dumpStats = function() {
+        console.error(_.map(d.std.strings, function(stringPool, index) {
+            return _.keys(stringPool).length;
+          }).join(', ')
+        );
+
+        setTimeout(dumpStats, 1000);
+      }
+      dumpStats();
+
     }
   );
 };
