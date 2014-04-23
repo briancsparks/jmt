@@ -114,16 +114,22 @@ var main = function() {
       var server = net.createServer();
       server.on('connection', function(connection) {
 
-        var chunks = [];
+        var chunks = [], length = 0;
         connection.on('data', function(chunk) {
           chunks.push(chunk);
+          length += chunk.length;
         });
 
         connection.on('end', function() {
-          runner.enqueue(chunks);
+          d.std.enqueueScript(chunks);
+          console.log('script: ' + length);
         });
 
       });
+
+      d.std.enqueueScript = function(chunks) {
+        runner.enqueue(chunks);
+      };
 
       console.log('Listening on ' + d.std.port);
       server.listen(d.std.port);
@@ -155,8 +161,9 @@ var main = function() {
         console.log('New subscriber: ' + name);
       });
 
-      console.log('Publishing on ' + (d.std.port + 1));
-      publish.listen(d.std.port+1);
+      d.std.publishPort = d.std.port + 1000;
+      console.log('Publishing on ' + (d.std.publishPort));
+      publish.listen(d.std.publishPort);
       //publish.listen('/tmp/ev3000_publish');
 
       // Stats

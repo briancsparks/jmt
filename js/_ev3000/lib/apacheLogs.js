@@ -1,5 +1,9 @@
 
 (function() {
+  var urlLib          = require('url');
+  var skwish          = d.std.skwish;
+  var url;
+
   var maxField = d.std.rawList.strings.length - 1;
 
   d.std.rawList.processRecord = function(record, record_) {
@@ -13,14 +17,12 @@
       if (index === 11) {
         field = '-';
       }
-      else if (index === 6) {
-        field = _.first(field.split('#', 1)[0].split('?', 1)[0].split('/'), 2).join('/');
-      }
-      else if (index === 10) {
-        field = _.first(field.split('#', 1)[0].split('?', 1)[0].split('/'), 4).join('/');
+      else if (index === 6 || index === 10) {
+        field = skwish(urlLib.parse(field, true), index);
+      } else {
+        field = d.std.rawList.strings[index][field] = (d.std.rawList.strings[index][field] || field);
       }
 
-      field = d.std.rawList.strings[index][field] = (d.std.rawList.strings[index][field] || field);
       return field;
     });
 
