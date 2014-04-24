@@ -11,7 +11,7 @@
       if (field_ !== null) { return field_; }
       var field = record_[index];
 
-      if (/^[0-9]+/.exec(field)) { return parseInt(field, 10); }
+      if (/^[0-9]+$/.exec(field)) { return parseInt(field, 10); }
       if (index > maxField) { index = maxField;}
 
       if (index === 11) {

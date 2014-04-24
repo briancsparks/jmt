@@ -201,12 +201,19 @@
     return callback(null, list, options);
   };
 
+  var empty = [];
+  d.std.rawList.filterRecord = function(record) {
+    var len = record.length;
+    var ret = empty[len] = empty[len] || _.map(record, function() { return null; });
+    return ret;
+  };
+
   d.std.rawList.processRecord = function(record, record_) {
     var fields = _.map(record, function(field_, index) {
       if (field_ !== null) { return field_; }
       var field = record_[index];
 
-      if (/^[0-9]+/.exec(field)) { return parseInt(field, 10); }
+      if (/^[0-9]+$/.exec(field)) { return parseInt(field, 10); }
       if (index > maxField) { index = maxField;}
 
       field = d.std.rawList.strings[index][field] = (d.std.rawList.strings[index][field] || field);
@@ -214,13 +221,6 @@
     });
 
     return fields;
-  };
-
-  var empty = [];
-  d.std.rawList.filterRecord = function(record) {
-    var len = record.length;
-    var ret = empty[len] = empty[len] || _.map(record, function() { return null; });
-    return ret;
   };
 
   d.std.rawList.filterFields = function(fields) {
@@ -300,38 +300,38 @@
     };
 
     var lines = [], numLines = 0;
-    var dispatchLines = function() {
-      if (isPaused() === 'TOO_MUCH_INPUT' && lines.length < 2000) {
-        console.log(dataStreamNum, d.std.node, 'Resuming at ' + lines.length);
-        resumeInput();
-      }
-
-      if (lines.length > 0) {
-        var line = lines.shift();
-        return dispatchLine(line, numLines, lines.length, function() {
-          // Every so often, break out of the stack
-          if (numLines % 10 === 0) { return setImmediate(dispatchLines); }
-
-          return dispatchLines();
-        });
-      }
-    };
-
     var chunks = [];
-    var dispatchLine = function(line, lineNum, numLinesRemaining, callback) {
-      var c2;
+    //var dispatchLines = function() {
+    //  if (isPaused() === 'TOO_MUCH_INPUT' && lines.length < 2000) {
+    //    console.log(dataStreamNum, d.std.node, 'Resuming at ' + lines.length);
+    //    resumeInput();
+    //  }
 
-      chunks.push(line + '\n');
-      if (chunks.length >= 10000 || numLinesRemaining === 0) {
-        c2 = chunks;
-        chunks = [];
-        console.log(dataStreamNum, d.std.node, numLinesRemaining, 'Sending: ' + c2.length);
-        flushedTime = new Date();
-        d.std.rawList.preProcess(c2, 9999, {left: left, right: right});
-      }
+    //  if (lines.length > 0) {
+    //    var line = lines.shift();
+    //    return dispatchLine(line, numLines, lines.length, function() {
+    //      // Every so often, break out of the stack
+    //      if (numLines % 10 === 0) { return setImmediate(dispatchLines); }
 
-      return callback();
-    };
+    //      return dispatchLines();
+    //    });
+    //  }
+    //};
+
+    //var dispatchLine = function(line, lineNum, numLinesRemaining, callback) {
+    //  var c2;
+
+    //  chunks.push(line + '\n');
+    //  if (chunks.length >= 10000 || numLinesRemaining === 0) {
+    //    c2 = chunks;
+    //    chunks = [];
+    //    console.log(dataStreamNum, d.std.node, numLinesRemaining, 'Sending: ' + c2.length);
+    //    flushedTime = new Date();
+    //    d.std.rawList.preProcess(c2, 9999, {left: left, right: right});
+    //  }
+
+    //  return callback();
+    //};
 
     var remainder = '';
     connection.on('data', function(chunk) {
@@ -357,10 +357,6 @@
           }, 100);
         });
       }
-
-      //if (numLinesOnEnter === 0) {
-      //  return dispatchLines();
-      //}
     });
 
     var closed = false;
