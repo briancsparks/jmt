@@ -16,10 +16,12 @@
   d.std.awkish.count = 0;
   d.std.awkish.leftCount = 0;
   d.std.awkish.rightCount = 0;
-  d.std.awkish.recordThreshold = d.std.awkish.recordThreshold || 100000; 
+  d.std.awkish.recordThreshold = d.std.awkish.recordThreshold || 30000; 
 
   var leftPort, rightPort, leftAwkish, rightAwkish;
-  if (d.std.node <= 6) {
+  var haveDownstreamListeners = (d.std.node <= 6);
+
+  if (haveDownstreamListeners) {
     leftPort  = d.std.awkish.leftPort   = 10000 + (d.std.node*2) + 1;
     rightPort = d.std.awkish.rightPort  = 10000 + (d.std.node*2) + 2;
     console.log('Spawning left and right', leftPort, rightPort);
@@ -87,7 +89,7 @@
 
   var maxField = d.std.rawList.strings.length - 1;
 
-  d.std.rawList.preProcess = function(chunks, numDataStreams, options_) {
+  d.std.rawList.preProcess = function(chunks, numDataStreams, options_, callback) {
     var startTime = new Date();
     var rawList = chunks.join('').split('\n');
 
@@ -113,8 +115,7 @@
 
     return d.std.rawList.process(rawList, options, function(err, list, options) {
       return d.std.rawList.populate(list, options, function(err) {
-
-        //return next();
+        return callback();
       });
     });
   };
@@ -125,14 +126,16 @@
     _.each(rawList, function(record__) {
       var sendToChild = false;
 
-      if (d.std.awkish.count >= 8 * d.std.awkish.recordThreshold) {
+      if (!haveDownstreamListeners) {
+        sendToChild = false;
+      } else if (d.std.awkish.count >= 8 * d.std.awkish.recordThreshold) {
         // We always send to children
-        if (d.std.awkish.leftCount + d.std.awkish.rightCount < (2*d.std.awkish.recordThreshold)+200) {
+        if (d.std.awkish.leftCount + d.std.awkish.rightCount < (2*d.std.awkish.recordThreshold)+20) {
           console.log('2--'+d.std.node, d.std.awkish.count, d.std.awkish.leftCount, d.std.awkish.rightCount);
         }
         sendToChild = true;
       } else if (d.std.awkish.count >= 1 * d.std.awkish.recordThreshold) {
-        if (d.std.awkish.count < d.std.awkish.recordThreshold+100) {
+        if (d.std.awkish.count < d.std.awkish.recordThreshold+10) {
           console.log('1--'+d.std.node, d.std.awkish.count, d.std.awkish.leftCount, d.std.awkish.rightCount);
         }
         if (d.std.awkish.count - d.std.awkish.recordThreshold > d.std.awkish.rightCount) {
@@ -161,20 +164,35 @@
       }
     });
 
-
-    if (leftData.length > 0) {
-      var left  = spawn('socat', ['-', 'tcp:localhost:'+ (leftPort + 2000)]);
-      left.stdin.setEncoding('utf8');
-      left.stdin.write(leftData.join('\n'));
-      left.stdin.end();
+    if (list.length > 0) {
+      console.log(d.std.node, 'Sending data: self, left, right: ', list.length, leftData.length, rightData.length);
     }
+    //try {
+      if (leftData.length > 0) {
+        options.left.stdin.write(leftData.join('\n'));
+      }
 
-    if (rightData.length > 0) {
-      var right = spawn('socat', ['-', 'tcp:localhost:'+ (rightPort + 2000)]);
-      right.stdin.setEncoding('utf8');
-      right.stdin.write(rightData.join('\n'));
-      right.stdin.end();
-    }
+      if (rightData.length > 0) {
+        options.right.stdin.write(rightData.join('\n'));
+      }
+    //} catch(err) {
+    //  console.log(d.std.node, 'Error trying to write to children', err);
+    //}
+
+
+    //if (leftData.length > 0) {
+    //  var left  = spawn('socat', ['-', 'tcp:localhost:'+ (leftPort + 2000)]);
+    //  left.stdin.setEncoding('utf8');
+    //  left.stdin.write(leftData.join('\n'));
+    //  left.stdin.end();
+    //}
+
+    //if (rightData.length > 0) {
+    //  var right = spawn('socat', ['-', 'tcp:localhost:'+ (rightPort + 2000)]);
+    //  right.stdin.setEncoding('utf8');
+    //  right.stdin.write(rightData.join('\n'));
+    //  right.stdin.end();
+    //}
 
     return callback(null, list, options);
   };
@@ -245,18 +263,136 @@
   };
 
   // ---------- Create the data listener---------- 
+  var left, right;
   var dataPort = net.createServer();
   var numDataStreams = 0;
   dataPort.on('connection', function(connection) {
+    numDataStreams++;
+    var dataStreamNum = numDataStreams;
+    //console.log(d.std.node, 'New connection: ' + dataStreamNum);
+
+    left  = left ||  spawn('socat', ['-', 'tcp:localhost:'+ (leftPort + 2000)]);
+    right = right || spawn('socat', ['-', 'tcp:localhost:'+ (rightPort + 2000)]);
+
+    left.stdin.setEncoding('utf8');
+    right.stdin.setEncoding('utf8');
+
+    var flushedTime;
+    var pausedReason = null;
+    var pauseInput = function(reason) {
+      //console.log(d.std.node, dataStreamNum, 'Pausing ' + reason);
+      pausedReason = reason;
+      connection.pause();
+    };
+
+    var isPaused = function() {
+      return pausedReason;
+    };
+
+    var resumeInput = function() {
+      //console.log(d.std.node, dataStreamNum, 'Resuming ' + pausedReason);
+      pausedReason = null;
+      connection.resume();
+    };
+
+    var lines = [], numLines = 0;
+    var dispatchLines = function() {
+      if (isPaused() === 'TOO_MUCH_INPUT' && lines.length < 2000) {
+        console.log(dataStreamNum, d.std.node, 'Resuming at ' + lines.length);
+        resumeInput();
+      }
+
+      if (lines.length > 0) {
+        var line = lines.shift();
+        return dispatchLine(line, numLines, lines.length, function() {
+          // Every so often, break out of the stack
+          if (numLines % 10 === 0) { return setImmediate(dispatchLines); }
+
+          return dispatchLines();
+        });
+      }
+    };
+
     var chunks = [];
+    var dispatchLine = function(line, lineNum, numLinesRemaining, callback) {
+      var c2;
+
+      chunks.push(line + '\n');
+      if (chunks.length >= 10000 || numLinesRemaining === 0) {
+        c2 = chunks;
+        chunks = [];
+        console.log(dataStreamNum, d.std.node, numLinesRemaining, 'Sending: ' + c2.length);
+        flushedTime = new Date();
+        d.std.rawList.preProcess(c2, 9999, {left: left, right: right});
+      }
+
+      return callback();
+    };
+
+    var remainder = '';
     connection.on('data', function(chunk) {
-      chunks.push(chunk.toString());
+      var numLinesOnEnter = lines.length;
+
+      lines = lines.concat((remainder + chunk.toString()).split('\n'));
+      remainder = lines.pop();
+
+      if (lines.length > 20000) {
+        console.log(dataStreamNum, d.std.node, 'Pausing at ' + lines.length);
+        pauseInput('TOO_MUCH_INPUT');
+      }
+
+      if (lines.length >= 10000) {
+        pauseInput('NORMAL_PAUSE_TO_PROCESS');
+        var chunky = _.map(lines, function(line) { return line+ '\n'; });
+        lines = [];
+        flushedTime = new Date();
+        d.std.rawList.preProcess(chunky, 9999, {left: left, right: right}, function(err) {
+          setTimeout(function() {
+            resumeInput();
+          }, 100);
+        });
+      }
+
+      //if (numLinesOnEnter === 0) {
+      //  return dispatchLines();
+      //}
     });
 
+    var closed = false;
     connection.on('end', function() {
-      numDataStreams++;
-      d.std.rawList.preProcess(chunks, numDataStreams, {});
+      var chunky = _.map(lines, function(line) { return line+ '\n'; });
+      lines = [];
+      flushedTime = new Date();
+      d.std.rawList.preProcess(chunky, 9999, {left: left, right: right}, function(err) {
+        //console.log(d.std.node, 'Closing children ' + dataStreamNum);
+        closed = true;
+        //left.stdin.end();
+        //right.stdin.end();
+      });
     });
+
+    var watchdog = function() {
+      if ((new Date()) - flushedTime > 10000 && lines.length > 0) {
+        console.log(d.std.node, 'Watchdog flushing ' + lines.length);
+        var chunky = _.map(lines, function(line) { return line+ '\n'; });
+        lines = [];
+        flushedTime = new Date();
+        d.std.rawList.preProcess(chunky, 9999, {left: left, right: right}, function(err) {
+        });
+      }
+      setTimeout(watchdog, 100);
+    };
+    watchdog();
+
+    var dumpDebug = function() {
+      if (lines.length > 9999) {
+        console.log(d.std.node, dataStreamNum, lines.length);
+      }
+      if (!closed) {
+        setTimeout(dumpDebug, 1000);
+      }
+    };
+    dumpDebug();
 
   });
 

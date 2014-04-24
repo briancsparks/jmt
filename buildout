@@ -1,0 +1,418 @@
+#!/usr/bin/env bash
+# vim: filetype=sh :
+
+# Usage: buildout name-of-remote-server
+
+#---
+# To add:
+#   echo "export RAILS_ENV=integration" >> .profile
+#---
+
+#---
+# Restarting server:
+#   echo "127.0.0.1 `hostname`" | sudo tee -a /etc/hosts
+#   vim application/current/config/database.yml application/current/config/utility.yml 
+#
+# Restarting app server:
+#   sudo nginx -t && sudo nginx
+#
+#   tail -F application/current/log/integration.log
+#
+# Restarting worker
+#   cd application/current/ && ./START_RESQUE_WORKER 
+#
+#---
+
+die() {
+  echo $1
+  xcode="99"
+  [[ $# > 1 ]] && xcode="$2"
+  exit $xcode
+}
+
+remote=""
+if [[ $# > 0 && $1 != --force && $1 != --user ]]
+then
+  remote=$1
+  shift
+fi
+
+forced=""
+if [[ $# > 0 && $1 == --force ]]
+then
+  shift
+  forced="$1"
+  shift
+fi
+
+user="scotty"
+if [[ $# > 0 && $1 == --user ]]
+then
+  shift
+  user="$1"
+  shift
+fi
+
+
+extra_users="sparksb casper"
+
+if [[ -n "$remote" ]]
+then
+  echo "Running local"
+
+  scp $0 ubuntu@${remote}:buildout
+
+  for ((;;))
+  do
+    cmd="bash -x ./buildout"
+    if [[ -n "$forced" ]]
+    then
+      cmd="${cmd} --force ${forced}"
+    fi
+
+    if [[ -n "$user" ]]
+    then
+      cmd="${cmd} --user ${user}"
+    fi
+
+    scp $0 ${user}@${remote}:buildout
+    ssh -A ${user}@${remote} 'chmod +x buildout'
+    ssh -A ${user}@${remote} $cmd
+    result="$?"
+    echo "Result $result"
+    if [[ $result == 0 ]]; then die "Done" 0; fi
+
+    if [[ "$result" == 255 ]]
+    then
+      ssh -A ubuntu@${remote} 'chmod +x buildout'
+      ssh -A ubuntu@${remote} $cmd
+      result="$?"
+      echo "ubuntu Result $result"
+      if [[ "$result" == 9 ]]; then die "Follow instructions and re-run:  ssh -A ubuntu@${remote} "; fi
+    fi
+
+    test $result && die "Zero from server -- done"
+    sleep 0.5
+  done
+else
+
+  echo "Running remote"
+  sudo chmod a+w /tmp 2>&1 > /dev/null
+
+  #----- Machine-level things -----
+
+  # Set the hostname
+  if ! grep `hostname` /etc/hosts 2>&1 > /dev/null
+  then
+    echo "127.0.0.1 `hostname`" | sudo tee -a /etc/hosts
+  fi
+
+  # Create the scotty user, in prep of killing the ubuntu user
+  if [[ `whoami` == ubuntu ]]
+  then
+    sudo useradd -m -s /bin/bash -G admin ${user}
+    sudo usermod -G staff -a ${user}
+    sudo cp -r ~/.ssh ../${user}
+    sudo chown -R ${user}:${user} ../${user}
+
+    ## make the extra users
+    #for u in $extra_users
+    #do
+    #  sudo useradd -m -s /bin/bash -G admin $u
+    #  sudo usermod -G staff -a $u
+    #  sudo cp -r ~/.ssh ../$u
+    #  sudo chown -R $u:$u ../$u
+    #done
+
+    echo "---------------------------------------------------------------------------"
+    echo "You MUST give scotty nopasswd sudo now... Invoke sudo visudo, and correct %admin ALL=(ALL) NOPASSWD:ALL"
+    echo "   Log back into the server as ubuntu; then sudo visudo"
+    echo "   Also, ssh git@github.com"
+    echo 
+    echo "   ssh -A ubuntu@..."
+    echo "---------------------------------------------------------------------------"
+    echo "Exiting with 9"
+    exit 9
+  fi
+
+  if [[ `whoami` == ${user} ]]
+  then
+
+    # Store up messages, spit them out at the end
+    rm /tmp/buildout-message
+
+    # Steal the ubuntu users data files, and kill the user
+    cd
+    if ! [[ -d ubuntu_user ]]
+    then
+
+      mkdir -p ubuntu_user
+      cd /home/ubuntu/ && sudo rm -rf .cache/ && sudo rm -rf .ssh/ && sudo find . -type f | while read f; do sudo cp $f ${HOME}/ubuntu_user/; done
+
+      cd
+      sudo chown -R ${user}:${user} ubuntu_user/
+      sudo userdel -r ubuntu
+    fi
+
+    # Install rudimentary stuff
+    cd
+    if ! dpkg -s git-core 2> /dev/null > /dev/null
+    then
+      sudo apt-get install -y libreadline6 git-core build-essential
+    fi
+
+    # Grab dotfiles
+    cd
+    if ! [[ -d dotfiles ]]
+    then
+      ssh -o "StrictHostKeyChecking no" git@github.com
+      git clone git@github.com:briancsparks/dotfiles.git && cd dotfiles && ls -a | grep -v git | xargs -L 1 -r -I {} cp {} ../; cd
+    fi
+
+    # Get ack
+    cd
+    if ! [[ -x ~/local/bin/ack ]]
+    then
+      mkdir -p ~/local/bin ~/local/lib && curl -L 'http://beyondgrep.com/ack-2.10-single-file' > ~/local/bin/ack && chmod 0755 ~/local/bin/ack
+    fi
+
+    ## Install gcc 4.8 -- not worth the effort, just use default
+    #cd
+    #if ! gcc --version | grep '4.8' 2>&1 > /dev/null
+    #then
+    #  if ! [[ -d zz_packages/compiler ]]
+    #  then
+    #    sudo apt-get update && sudo apt-get upgrade -y
+    #    sudo apt-get install -y zlib1g zlib1g-dev openssl tree curl htop nmap gawk libcurl4-openssl-dev libssl-dev \
+    #                            flex bison libc6-dev-i386 g++ make
+
+    #    cd; mkdir -p zz_packages/compiler/build
+    #    cd zz_packages/compiler
+
+    #    curl http://ftp.gnu.org/gnu/gcc/gcc-4.8.2/gcc-4.8.2.tar.bz2 | tar xvj
+    #    ln -s gcc-4.8.2 gcc
+
+    #    cd gcc
+    #    ./contrib/download_prerequisites
+    #    cd ..
+
+    #    cd build
+
+    #    ../gcc/configure --disable-checking --enable-languages=c,c++ --enable-shared --enable-threads=posix --program-suffix=4.8 \
+    #                 --without-included-gettext --with-system-zlib --with-tune=generic
+
+    #    make -j`grep -c ^processor /proc/cpuinfo` && sudo make install
+
+    #    #sudo ln -sf /usr/local/bin/g++4.8  /usr/bin/g++
+    #    #sudo ln -sf /usr/local/bin/gcc4.8  /usr/bin/gcc
+    #    #sudo ln -sf /usr/local/bin/x86_64-unknown-linux-gnu-g++4.8  /usr/bin/x86_64-linux-gnu-g++
+    #    #sudo ln -sf /usr/local/bin/x86_64-unknown-linux-gnu-gcc4.8  /usr/bin/x86_64-linux-gnu-gcc
+
+    #    # This is the message at the end of compiling/install gcc 4.8
+    #    #
+    #    #Libraries have been installed in:
+    #    #/usr/local/lib/../lib64
+    #    #
+    #    #If you ever happen to want to link against installed libraries
+    #    #in a given directory, LIBDIR, you must either use libtool, and
+    #    #specify the full pathname of the library, or use the `-LLIBDIR'
+    #    #flag during linking and do at least one of the following:
+    #    #- add LIBDIR to the `LD_LIBRARY_PATH' environment variable
+    #    #during execution
+    #    #- add LIBDIR to the `LD_RUN_PATH' environment variable
+    #    #during linking
+    #    #- use the `-Wl,-rpath -Wl,LIBDIR' linker flag
+    #    #- have your system administrator add LIBDIR to `/etc/ld.so.conf'
+    #    #
+    #    #See any operating system documentation about shared libraries for
+    #    #more information, such as the ld(1) and ld.so(8) manual pages.
+
+
+    #  fi
+    #fi
+
+    ## Install basics - This is for when using gcc 4.8
+    #cd
+    #if ! dpkg -s socat 2> /dev/null > /dev/null
+    #then
+
+    #  # Make certain dirs available to scotty
+    #  sudo mkdir -p /var/log
+    #  sudo chown root:staff /var     && sudo chmod g+w /var
+    #  sudo chown root:staff /var/log && sudo chmod g+w /var/log
+
+    #  sudo apt-get update && sudo apt-get upgrade -y
+    #  sudo apt-get install -y ncurses-dev libncurses5-dev libgdbm-dev libyaml-dev libffi-dev libreadline6 libreadline6-dev \
+    #                          autoconf libc6-dev automake libtool subversion pkg-config libperl-dev \
+    #                          libpcre3 libpcre3-dev libgd-tools libsqlite3-dev sqlite3 libxml2-dev libxslt-dev libmysqlclient-dev cscope exuberant-ctags \
+    #                          mercurial git-core socat ntp
+    #  sudo shutdown -r now 
+    #  exit 0
+    #fi
+
+    # Install basics
+    cd
+    if ! dpkg -s socat 2> /dev/null > /dev/null
+    then
+
+      # Make certain dirs available to scotty
+      sudo mkdir -p /var/log
+      sudo chown root:staff /var     && sudo chmod g+w /var
+      sudo chown root:staff /var/log && sudo chmod g+w /var/log
+
+      sudo apt-get update && sudo apt-get upgrade -y && sudo apt-get install -y openssl tree curl htop nmap mercurial build-essential git-core socat gawk libcurl4-openssl-dev ntp
+      sudo apt-get install -y ncurses-dev libncurses5-dev libgdbm-dev libyaml-dev libffi-dev libreadline6 libreadline6-dev \
+                              zlib1g zlib1g-dev libssl-dev autoconf libc6-dev automake libtool bison subversion pkg-config libperl-dev \
+                              libpcre3 libpcre3-dev libgd-tools libsqlite3-dev sqlite3 libxml2-dev libxslt-dev libmysqlclient-dev cscope exuberant-ctags 
+      sudo shutdown -r now 
+      exit 0
+    fi
+
+    # Compile Ruby/vim
+    cd
+    if ! [[ -d zz_packages/vim74 ]]
+    then
+      mkdir -p zz_packages && cd zz_packages && curl "http://cache.ruby-lang.org/pub/ruby/1.9/ruby-1.9.3-p194.tar.gz" \
+        | tar -xvz && ln -s ruby-1.9.3-p194 ruby && cd ruby && ./configure && make -j`grep -c ^processor /proc/cpuinfo` && sudo make install; cd
+      sudo apt-get purge -y vim vim-runtime gvim vim-tiny vim-common vim-gui-common
+      cd zz_packages && curl 'ftp://ftp.vim.org/pub/vim/unix/vim-7.4.tar.bz2' \
+        | tar xvj && ln -s vim74 vim && cd vim \
+        && ./configure --with-features=huge --enable-rubyinterp --enable-pythoninterp --enable-perlinterp --prefix=/usr && make -j`grep -c ^processor /proc/cpuinfo` && sudo make install; cd
+      cd; cd .vim/ && curl -skL 'http://www.vim.org/scripts/download_script.php?src_id=10433' | tar xvz; cd
+    fi
+
+    # Configure vim
+    cd
+    if ! [[ -d ~/.vim/bundle ]]
+    then
+      mkdir -p ~/.vim/autoload ~/.vim/bundle && curl -Sso ~/.vim/autoload/pathogen.vim https://raw.github.com/tpope/vim-pathogen/master/autoload/pathogen.vim
+      cd ~/.vim/bundle \
+        && git clone git@github.com:tpope/vim-rails.git \
+        && git clone git@github.com:tpope/vim-bundler.git \
+        && git clone git@github.com:tpope/vim-fugitive.git \
+        && git clone git@github.com:tpope/pry-editline.git \
+        && git clone git://git.wincent.com/command-t.git command-t; cd
+      cd ~/.vim/bundle/command-t/ruby/command-t && ruby extconf.rb && make -j`grep -c ^processor /proc/cpuinfo`; cd
+    fi
+
+    # Compile Node.js
+    cd
+    if ! [[ -d zz_packages/node ]]
+    then
+      cd zz_packages && git clone git@github.com:joyent/node.git && cd node && git checkout tags/v0.10.19 && ./configure --prefix=${HOME}/local && make -j`grep -c ^processor /proc/cpuinfo` && sudo make install
+    fi
+
+    # Redis-server
+    cd
+    if ! [[ -d zz_packages/redis ]]
+    then
+      cd; cd zz_packages && curl http://download.redis.io/redis-stable.tar.gz | tar xvz && ln -s redis-stable redis && cd redis && make -j`grep -c ^processor /proc/cpuinfo` && sudo make install
+      cat redis.conf | sed "s/daemonize no/daemonize yes/; s/# bind 127.0.0.1/bind `curl http://169.254.169.254/latest/meta-data/local-ipv4 | cut -d, -f1`/" | sudo tee /etc/redis.conf > /dev/null
+      sudo redis-server /etc/redis.conf
+    fi
+
+    # nginx & Passenger
+    if [[ $forced == nginx ]]
+    then
+
+      cd
+      if ! [[ -d zz_packages/nginx ]]
+      then
+        cd zz_packages && hg clone http://hg.nginx.org/nginx nginx && cd nginx && ln -fs ./auto/configure configure; cd
+
+        # Passenger
+        sudo gem install bundler --no-ri --no-rdoc \
+          && sudo gem install passenger --no-ri --no-rdoc \
+          && sudo gem install rails -v 3.2.11 --no-ri --no-rdoc \
+          && sudo passenger-install-nginx-module --auto --prefix=/etc/nginx --nginx-source-dir=${HOME}/zz_packages/nginx --extra-configure-flags=none; cd
+
+        sudo ln -s /etc/nginx/sbin/nginx /usr/sbin/nginx
+      fi
+    fi
+
+    # ImageMagick
+    if [[ $forced == ImageMagick ]]
+    then
+
+      cd
+      if ! [[ -d zz_packages/ImageMagick ]]
+      then
+
+        sudo apt-get install -y a2ps libtiff4-dev libfreetype6-dev libpng-dev
+
+        echo export PKG_CONFIG_PATH=/usr/lib/pkgconfig >> ~/.profile
+        cd zz_packages
+        curl -L http://sourceforge.net/projects/imagemagick/files/old-sources/6.x/6.7/ImageMagick-6.7.9-10.tar.gz/download | tar xvz
+        ln -s ImageMagick-6.7.9-10 ImageMagick
+        cd ImageMagick
+        ./configure --prefix=/usr --sysconfdir=/etc --with-modules --with-perl --enable-64bit && make -j`grep -c ^processor /proc/cpuinfo` && sudo make install
+        cd
+      fi
+    fi
+    
+    # hplip
+    if [[ $forced == hplip ]]
+    then
+
+      cd
+      if ! [[ -d zz_packages/hplip ]]
+      then
+
+        echo DEVICE_URI=x >> ~/.profile
+
+        sudo apt-get install -y libcups2 cups libcups2-dev cups-bsd cups-client libcupsimage2-dev libdbus-1-dev ghostscript \
+                                libsnmp-dev libtool libusb-dev python-imaging policykit-1 policykit-1-gnome\
+                                python-qt4 python-qt4-dbus python-dbus python-gobject python-dev python-notify \
+                                a2ps libtiff4-dev libfreetype6-dev python python-reportlab libsane libsane-dev sane-utils xsane
+
+        cd zz_packages
+        curl -L http://sourceforge.net/projects/hplip/files/hplip/3.12.4/hplip-3.12.4.tar.gz/download | tar xvz 
+        ln -s hplip-3.12.4 hplip
+        cd hplip
+        pushd ppd/hpcups && gunzip *; popd
+        ./configure --with-hpppddir=/usr/share/ppd/HP --libdir=/usr/lib64 --prefix=/usr --enable-udev-acl-rules --enable-qt4 \
+                    --enable-doc-build --disable-cups-ppd-install --disable-foomatic-drv-install --disable-foomatic-ppd-install \
+                    --disable-hpijs-install --disable-policykit --enable-cups-drv-install --enable-hpcups-install \
+                    --enable-network-build --enable-dbus-build --enable-scan-build --enable-fax-build
+
+        make -j`grep -c ^processor /proc/cpuinfo` && sudo make install
+      fi
+    fi
+
+
+    # MySQL server
+    if [[ $forced == mysql ]]
+    then
+      cd
+      if ! dpkg -s mysql-server 2> /dev/null > /dev/null
+      then
+        sudo apt-get install -y mysql-server
+        echo "Edit /etc/mysql/my.cnf" >> /tmp/buildout-message
+      fi
+    fi
+
+    # Memcached-server
+    if [[ $forced == memcache ]]
+    then
+      cd
+      if ! [[ -f /etc/memcached.conf ]]
+      then
+        sudo apt-get install -y memcached
+        sudo usermod -G staff memcache
+        sudo chown root:staff /var && sudo chmod g+rw /var
+        sudo chown root:staff /var/log && sudo chmod g+rw /var/log
+        sudo touch /var/log/memcached.log
+        sudo chown memcache:staff /var/log/memcached.log
+        sudo service memcached stop
+
+        echo "Edit /etc/memcached.conf, and -m 15000 -l Xu.example.com, restart memcached" >> /tmp/buildout-message
+      fi
+    fi
+
+  fi
+
+  test -f /tmp/buildout-message && cat /tmp/buildout-message
+
+  exit 0
+fi
+

@@ -12,23 +12,28 @@
       var url;
       if (typeof x[6] === 'string') {
         url = urlLib.parse(x[6], true);
-        delete url.search;
-        delete url.path;
-        delete url.href;
-        delete url.query.message;
-
-        l[lineNum][6] = skwish(url, 6);
+      } else {
+        url = x[6];
       }
+      delete url.search;
+      delete url.path;
+      delete url.href;
+      delete url.query.message;
+
+      l[lineNum][6] = skwish(url, 6);
 
       if (typeof x[10] === 'string') {
         url = urlLib.parse(x[10], true);
-        delete url.search;
-        delete url.path;
-        delete url.href;
-        delete url.query.message;
-
-        l[lineNum][10] = skwish(url, 10);
+      } else {
+        url = x[10];
       }
+      delete url.search;
+      delete url.path;
+      delete url.href;
+      delete url.query.message;
+
+      l[lineNum][10] = skwish(url, 10);
+
       numProcessed++;
     });
   });
