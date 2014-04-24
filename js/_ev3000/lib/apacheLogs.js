@@ -18,7 +18,12 @@
         field = '-';
       }
       else if (index === 6 || index === 10) {
-        field = skwish(urlLib.parse(field, true), index);
+        url = urlLib.parse(field, true);
+        delete url.search;
+        delete url.path;
+        delete url.href;
+
+        field = skwish(url, index);
       } else {
         field = d.std.rawList.strings[index][field] = (d.std.rawList.strings[index][field] || field);
       }

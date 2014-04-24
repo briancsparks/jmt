@@ -19,7 +19,7 @@
   d.std.awkish.recordThreshold = d.std.awkish.recordThreshold || 30000; 
 
   var leftPort, rightPort, leftAwkish, rightAwkish;
-  var haveDownstreamListeners = (d.std.node <= 6);
+  var haveDownstreamListeners = (d.std.node <= 30);
 
   if (haveDownstreamListeners) {
     leftPort  = d.std.awkish.leftPort   = 10000 + (d.std.node*2) + 1;
@@ -73,7 +73,7 @@
   }
 
   var sendToPort = function(port, str) {
-    console.log('awkish: sending ' + str.length + ' to ' + port);
+    console.log(d.std.port, 'awkish: sending ' + str.length + ' to ' + port);
     var socat = spawn('socat', ['-', 'tcp:localhost:'+port]);
     socat.stdin.setEncoding('utf8');
     socat.stdin.write(str);
@@ -134,11 +134,15 @@
           console.log('2--'+d.std.node, d.std.awkish.count, d.std.awkish.leftCount, d.std.awkish.rightCount);
         }
         sendToChild = true;
-      } else if (d.std.awkish.count >= 1 * d.std.awkish.recordThreshold) {
-        if (d.std.awkish.count < d.std.awkish.recordThreshold+10) {
-          console.log('1--'+d.std.node, d.std.awkish.count, d.std.awkish.leftCount, d.std.awkish.rightCount);
-        }
-        if (d.std.awkish.count - d.std.awkish.recordThreshold > d.std.awkish.rightCount) {
+      //} else if (d.std.awkish.count >= 1 * d.std.awkish.recordThreshold) {
+      //  if (d.std.awkish.count < d.std.awkish.recordThreshold+10) {
+      //    console.log('1--'+d.std.node, d.std.awkish.count, d.std.awkish.leftCount, d.std.awkish.rightCount);
+      //  }
+      //  if (d.std.awkish.count - d.std.awkish.recordThreshold > d.std.awkish.rightCount) {
+      //    sendToChild = true;
+      //  }
+      } else {
+        if (d.std.awkish.count > d.std.awkish.rightCount) {
           sendToChild = true;
         }
       }
@@ -165,7 +169,7 @@
     });
 
     if (list.length > 0) {
-      console.log(d.std.node, 'Sending data: self, left, right: ', list.length, leftData.length, rightData.length);
+      console.log(d.std.port, 'Sending data: self, left, right: ', list.length, leftData.length, rightData.length);
     }
     //try {
       if (leftData.length > 0) {
@@ -277,7 +281,7 @@
     left.stdin.setEncoding('utf8');
     right.stdin.setEncoding('utf8');
 
-    var flushedTime;
+    var flushedTime, doneDisplayed = false;
     var pausedReason = null;
     var pauseInput = function(reason) {
       //console.log(d.std.node, dataStreamNum, 'Pausing ' + reason);
@@ -332,6 +336,7 @@
     var remainder = '';
     connection.on('data', function(chunk) {
       var numLinesOnEnter = lines.length;
+      doneDisplayed = false;
 
       lines = lines.concat((remainder + chunk.toString()).split('\n'));
       remainder = lines.pop();
@@ -372,13 +377,21 @@
     });
 
     var watchdog = function() {
-      if ((new Date()) - flushedTime > 10000 && lines.length > 0) {
-        console.log(d.std.node, 'Watchdog flushing ' + lines.length);
-        var chunky = _.map(lines, function(line) { return line+ '\n'; });
-        lines = [];
-        flushedTime = new Date();
-        d.std.rawList.preProcess(chunky, 9999, {left: left, right: right}, function(err) {
-        });
+      var now = new Date();
+      if (now - flushedTime > 10000) {
+        if (lines.length > 0) {
+          console.log(d.std.node, 'Watchdog flushing ' + lines.length);
+          var chunky = _.map(lines, function(line) { return line+ '\n'; });
+          lines = [];
+          flushedTime = new Date();
+          d.std.rawList.preProcess(chunky, 9999, {left: left, right: right}, function(err) {
+          });
+        } else {
+          if (!doneDisplayed) {
+            doneDisplayed = true;
+            //console.log(d.std.node, 'Watchdog done? ' + (now - flushedTime));
+          }
+        }
       }
       setTimeout(watchdog, 100);
     };

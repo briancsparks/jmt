@@ -43,7 +43,7 @@ var main = function() {
         };
 
         var dispatch = function() {
-          var script, m, lines, resultName;
+          var script, m, lines, resultName, options = {};
 
           if (queue.length > 0) {
 
@@ -57,8 +57,10 @@ var main = function() {
               lines[0] = m[2];
             }
 
+            options.startTime = new Date();
+            options.resultName = resultName;
             var result = self.exec(lines.join('\n'));
-            return d.std.publishResult(result, {resultName: resultName}, function(err) {
+            return d.std.publishResult(result, options, function(err) {
               setImmediate(dispatch);
             });
           }
@@ -89,6 +91,9 @@ var main = function() {
         _.each(listeners, function(listener) {
           listener.write(output, 'utf8');
         });
+        if (result.response !== 0) {
+          console.log(d.std.port, '                                                    ' + output.replace(/\n/, ''), (new Date() - options.startTime) * 0.001);
+        }
 
         return callback();
       };
@@ -122,7 +127,7 @@ var main = function() {
 
         connection.on('end', function() {
           d.std.enqueueScript(chunks);
-          console.log('script: ' + length);
+          console.log(d.std.port, 'script: ' + length);
         });
 
       });
