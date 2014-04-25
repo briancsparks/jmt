@@ -14,7 +14,7 @@ var d = {
  *
  *  Creates closure so nothing besides 'd' is at the outer-most scope
  */
-var main = function() {
+var main = function(undefined) {
 
   var net         = require('net');
   var urlLib      = require('url');
@@ -37,20 +37,27 @@ var main = function() {
         };
 
         var queue = [];
-        self.enqueue = function(script) {
-          queue.push(script);
-          dispatch();
+        self.enqueue = function(script, connection) {
+          var scriptsOnEnter = queue.length;
+          queue.push({script: script, connection: connection});
+
+          if (scriptsOnEnter === 0) {
+            dispatch();
+          }
         };
 
         var dispatch = function() {
-          var script, m, lines, resultName, options = {};
+          var meta, script, m, lines, resultName, options = {};
 
           if (queue.length > 0) {
 
             numResults++;
             resultName = 'r_' + numResults;
 
-            script = queue.shift().join('');
+            meta = queue.shift();
+            options.connection = meta.connection;
+
+            script = meta.script.join('');
             lines = script.split('\n');
             if (lines && lines.length > 0 && (m = /^(\s*[a-z_][a-z0-9_]*)\s*:=\s*(.*)$/i.exec(lines[0]))) {
               resultName = m[1];
@@ -59,18 +66,90 @@ var main = function() {
 
             options.startTime = new Date();
             options.resultName = resultName;
-            var result = self.exec(lines.join('\n'));
-            return d.std.publishResult(result, options, function(err) {
-              setImmediate(dispatch);
+
+            //var stats = self.exec(lines.join('\n'));
+            return self.exec(lines.join('\n'), function(err, stats) {
+              return d.std.publishResult(stats, options, function(err) {
+                setImmediate(dispatch);
+              });
             });
           }
         };
 
-        self.exec = function(script) {
+        self.exec = function(script, callback) {
+          var $_ = {}, $n = 0, $a = [], $h = {};
+          var _stats = {userResult: null};
+
+          _stats.startTime = new Date();
+          _stats.numProcessed = 0;
+          _stats.perf = {};
+
+          var histo = function(bucket, value_) {
+            var value = value_ || 1;
+            $h[bucket] = ($h[bucket] || 0) + value;
+          };
+
+          var eachItem = function(fn, doCount) {
+            _.each(d.list, function(l, lIndex) {
+              _.each(l, function(x, xIndex) {
+                if (doCount) {
+                  _stats.numProcessed++;
+                }
+                fn(x, xIndex, l, lIndex);
+              });
+            });
+          };
+
+          var filter = function(filterFn, fn) {
+            eachItem(function(x, xIndex, l, lIndex) {
+              var good = filterFn.apply(this, arguments);
+              if (good) {
+                _stats.numProcessed++;
+                fn.apply(this, arguments);
+              }
+            }, false);
+          };
+
+          var localCallback = function(err, userResult) {
+            _stats.finalResult = _stats.userResult = userResult;
+
+            _stats.endTime = new Date();
+            _stats.elapsed = _stats.endTime - _stats.startTime;
+
+            // Try and be smart about what the user did
+            if (_stats.finalResult === undefined || _stats.finalResult === null) {
+              if (_.keys($_).length > 0) {
+                _stats.finalResult = $_;
+              } else if (_.keys($h).length > 0) {
+                _stats.finalResult = $h;
+              } else if ($a.length > 0) {
+                _stats.finalResult = $a;
+              } else if ($n !== 0) {
+                _stats.finalResult = $n;
+              }
+            }
+
+            if (_stats.finalResult === undefined || _stats.finalResult === null) {
+              console.log(d.std.port, _.keys($_), _.keys($h), $a.length, $n);
+            }
+
+            return callback(err, _stats);
+          };
+
+          var getCallbackWasCalled = false;
+          var getCallback = function() {
+            getCallbackWasCalled = true;
+            return callback;
+          };
+
           try {
-            return {response: eval(script)};
+            _stats.finalResult = _stats.userResult = eval(script);
           } catch(err) {
-            return {error: err};
+            _stats = _.extend(_stats, {error: err});
+          }
+
+          if (!getCallbackWasCalled) {
+            return localCallback(_stats.error, _stats.userResult);
           }
         };
       };
@@ -78,23 +157,34 @@ var main = function() {
     },
     
     function(next) {
-      d.std.publishResult = function(result, options, callback) {
+      d.std.publishResult = function(stats, options, callback) {
         options.resultName = options.resultName || 'r_' + (++numResults);
-        results[options.resultName] = result;
+        results[options.resultName] = stats;
 
-        var output = options.resultName + ':= ' + result.response;
-        if (options.startTime && /^[0-9]+$/.exec(result.response)) {
-          output += '  [' + (parseInt(result.response, 10) * 1000 / (new Date() - options.startTime)) + ']';
+        var output = options.resultName + ':= ';
+        try {
+          output += JSON.stringify(stats.finalResult);
+        } catch(err) {
+          output += stats.finalResult;
+        }
+
+        if (options.startTime && /^[0-9]+$/.exec(stats.finalResult)) {
+          output += '  [' + (parseInt(stats.finalResult, 10) * 1000 / (new Date() - options.startTime)) + ']';
         }
         output += '\n';
 
-        _.each(listeners, function(listener) {
-          listener.write(output, 'utf8');
-        });
-        if (result.response !== 0) {
+        if (stats.finalResult !== 0) {
           console.log(d.std.port, '                                                    ' + output.replace(/\n/, ''), (new Date() - options.startTime) * 0.001);
         }
 
+        if (options.connection) {
+          options.connection.write(JSON.stringify(stats.finalResult), 'utf8');
+          options.connection.end();
+        }
+
+        //_.each(listeners, function(listener) {
+        //  listener.write(output, 'utf8');
+        //});
         return callback();
       };
 
@@ -116,7 +206,7 @@ var main = function() {
       d.std.port      = parseInt(ARGV.port || 9432, 10);
 
       // ---------- Create the input port---------- 
-      var server = net.createServer();
+      var server = net.createServer({allowHalfOpen:true});
       server.on('connection', function(connection) {
 
         var chunks = [], length = 0;
@@ -126,14 +216,14 @@ var main = function() {
         });
 
         connection.on('end', function() {
-          d.std.enqueueScript(chunks);
+          d.std.enqueueScript(chunks, connection);
           console.log(d.std.port, 'script: ' + length);
         });
 
       });
 
-      d.std.enqueueScript = function(chunks) {
-        runner.enqueue(chunks);
+      d.std.enqueueScript = function(chunks, connection) {
+        runner.enqueue(chunks, connection);
       };
 
       console.log('Listening on ' + d.std.port);

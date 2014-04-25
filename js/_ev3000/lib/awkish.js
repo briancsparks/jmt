@@ -18,6 +18,12 @@
   d.std.awkish.rightCount = 0;
   d.std.awkish.recordThreshold = d.std.awkish.recordThreshold || 30000; 
 
+  // If we have no downstream ports, this gets called.  The 'real' one
+  // is below.
+  var sendToPorts = function(callback) {
+    return callback();
+  };
+
   var leftPort, rightPort, leftAwkish, rightAwkish;
   var haveDownstreamListeners = (d.std.node <= 30);
 
@@ -55,14 +61,6 @@
       console.error(d.std.node + ' right exit with ' + exitCode);
     });
 
-    var oldEnqueueScript = d.std.enqueueScript;
-    d.std.enqueueScript = function(chunks) {
-      var script = chunks.join('');
-      sendToPort(d.std.awkish.leftPort, script);
-      sendToPort(d.std.awkish.rightPort, script);
-      return oldEnqueueScript(chunks);
-    };
-
     setTimeout(function() {
       fs.readFile(path.join(__dirname, '_ev3000/lib/awkish.js'), function(err, contents) {
         sendToPort(d.std.awkish.leftPort, contents);
@@ -70,11 +68,58 @@
       });
     }, 1000);
 
+    sendToPorts = function(callback) {
+      return callback();
+    };
+
   }
 
-  var sendToPort = function(port, str) {
+  var oldEnqueueScript = d.std.enqueueScript;
+  d.std.enqueueScript = function(chunks, connection) {
+    var selfResult, leftResult, rightResult;
+
+    // Hijack the connection's end function
+    var oldEnd = connection.end;
+    var endArgs;
+    connection.end = function() {
+      selfResult = arguments;
+      return finish();
+    }
+
+    var finish = function() {
+      if (selfResult && leftResult && rightResult) {
+        return oldEnd.apply(connection, selfResult);
+      }
+    };
+
+    var script = chunks.join('');
+    sendToPort(d.std.awkish.leftPort, script, function(exitCode, chunks) {
+      leftResult = chunks;
+      return finish();
+    });
+
+    sendToPort(d.std.awkish.rightPort, script, function(exitCode, chunks) {
+      rightResult = chunks;
+      return finish();
+    });
+
+    return oldEnqueueScript(chunks, connection);
+  };
+
+  var sendToPort = function(port, str, callback) {
     console.log(d.std.port, 'awkish: sending ' + str.length + ' to ' + port);
     var socat = spawn('socat', ['-', 'tcp:localhost:'+port]);
+
+    var chunks = [];
+    socat.stdout.on('data', function(chunk) {
+      chunks.push(chunk);
+      //console.log(chunk.toString());
+    });
+
+    socat.on('end', function(exitCode) {
+      return callback(exitCode !== 0);
+    });
+
     socat.stdin.setEncoding('utf8');
     socat.stdin.write(str);
     socat.stdin.end();
@@ -230,7 +275,7 @@
   d.std.rawList.populate = function(list, options, callback) {
     var slot = d.list.length;
     d.list[slot] = list;
-    return d.std.publishResult({response: list.length}, options, callback);
+    return d.std.publishResult({finalResult: list.length}, options, callback);
   };
 
   d.std.skwish = function(x, dictNum) {
