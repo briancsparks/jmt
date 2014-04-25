@@ -110,14 +110,18 @@ var main = function(undefined) {
             }, false);
           };
 
-          var localCallback = function(err, userResult) {
+          var localCallback = function(err, userResult_) {
+            var userResult = userResult_;
+            if (userResult === undefined) {
+              userResult = '*** No results provided ***';
+            }
             _stats.finalResult = _stats.userResult = userResult;
 
             _stats.endTime = new Date();
             _stats.elapsed = _stats.endTime - _stats.startTime;
 
             // Try and be smart about what the user did
-            if (_stats.finalResult === undefined || _stats.finalResult === null) {
+            if (userResult_ === undefined || userResult_ === null) {
               if (_.keys($_).length > 0) {
                 _stats.finalResult = $_;
               } else if (_.keys($h).length > 0) {
@@ -129,9 +133,9 @@ var main = function(undefined) {
               }
             }
 
-            if (_stats.finalResult === undefined || _stats.finalResult === null) {
-              console.log(d.std.port, _.keys($_), _.keys($h), $a.length, $n);
-            }
+            //if (userResult_ === undefined || userResult_ === null) {
+            //  console.log(d.std.port, 'No user results: ', _.keys($_), _.keys($h), $a.length, $n);
+            //}
 
             return callback(err, _stats);
           };
@@ -160,6 +164,8 @@ var main = function(undefined) {
       d.std.publishResult = function(stats, options, callback) {
         options.resultName = options.resultName || 'r_' + (++numResults);
         results[options.resultName] = stats;
+
+        //console.log(d.std.port, 'stats-orig finalResult', stats.finalResult);
 
         var output = options.resultName + ':= ';
         try {

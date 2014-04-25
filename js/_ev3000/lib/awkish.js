@@ -1,5 +1,6 @@
 
 (function() {
+  console.log(d.std.port, 'Awkish starting');
 
   var spawn           = require('child_process').spawn;
   var fs              = require('fs');
@@ -25,7 +26,7 @@
   };
 
   var leftPort, rightPort, leftAwkish, rightAwkish;
-  var haveDownstreamListeners = (d.std.node <= 30);
+  var haveDownstreamListeners = (d.std.node <= 6);      // 2, 6, 14, 30, 62, 126, 254
 
   if (haveDownstreamListeners) {
     leftPort  = d.std.awkish.leftPort   = 10000 + (d.std.node*2) + 1;
@@ -53,12 +54,12 @@
 
     leftAwkish.on('end', function(exitCode) {
       if (exitCode !== 0) {
-        console.error(d.std.node + ' left exit with ' + exitCode);
+        console.error(d.std.port + ' left exit with ' + exitCode);
       }
     });
 
     rightAwkish.on('end', function(exitCode) {
-      console.error(d.std.node + ' right exit with ' + exitCode);
+      console.error(d.std.port + ' right exit with ' + exitCode);
     });
 
     setTimeout(function() {
@@ -74,34 +75,67 @@
 
   }
 
+  var logfer1 = function() {
+    //if (d.std.port === 10000 || d.std.port === 10001 || d.std.port === 10003 || d.std.port === 10007) {
+    //  console.log.apply(this, arguments);
+    //}
+  };
+
   var oldEnqueueScript = d.std.enqueueScript;
   d.std.enqueueScript = function(chunks, connection) {
     var selfResult, leftResult, rightResult;
+    var script = chunks.join('');
 
-    // Hijack the connection's end function
+    logfer1(d.std.port, '----- Entering enqueueScript ' + script.length);
+
+    // Hijack the connection's write and end function
     var oldEnd = connection.end;
-    var endArgs;
     connection.end = function() {
-      selfResult = arguments;
+      connection.write = oldWrite;
+      connection.end   = oldEnd;
+
+      selfResult = JSON.parse(selfResult.join('')) || arguments[0] || '';
+      logfer1(d.std.port, '----- on end ' + JSON.stringify(selfResult));
       return finish();
     }
 
-    var finish = function() {
-      if (selfResult && leftResult && rightResult) {
-        return oldEnd.apply(connection, selfResult);
-      }
+    var oldWrite = connection.write;
+    connection.write = function(chunk) {
+      selfResult = selfResult || [];
+      selfResult.push(chunk.toString());
     };
 
-    var script = chunks.join('');
-    sendToPort(d.std.awkish.leftPort, script, function(exitCode, chunks) {
-      leftResult = chunks;
-      return finish();
-    });
+    if (haveDownstreamListeners) {
+      logfer1(d.std.port, '----- Sending downstream ' + script.length);
+      sendToPort(d.std.awkish.leftPort, script, function(err, result) {
+        leftResult = result;
+        logfer1(d.std.port, '----- on lend ' + JSON.stringify(leftResult));
+        return finish();
+      });
 
-    sendToPort(d.std.awkish.rightPort, script, function(exitCode, chunks) {
-      rightResult = chunks;
-      return finish();
-    });
+      sendToPort(d.std.awkish.rightPort, script, function(err, result) {
+        rightResult = result;
+        logfer1(d.std.port, '----- on rend ' + JSON.stringify(rightResult));
+        return finish();
+      });
+    } else {
+      leftResult = rightResult = null;
+    }
+
+    var finish = function() {
+      logfer1(d.std.port, '----- on finish ', selfResult && selfResult.length, leftResult && leftResult.length, rightResult && rightResult.length);
+      if (selfResult && leftResult !== undefined && rightResult !== undefined) {
+        // We have all the data!
+        var reply = [selfResult];
+
+        if (leftResult)   { reply = reply.concat(leftResult); }
+        if (rightResult)  { reply = reply.concat(rightResult); }
+
+        reply = JSON.stringify(reply);
+        logfer1(d.std.port, '----- reply ', reply);
+        return oldEnd.call(connection, reply, 'utf8');
+      }
+    };
 
     return oldEnqueueScript(chunks, connection);
   };
@@ -113,11 +147,12 @@
     var chunks = [];
     socat.stdout.on('data', function(chunk) {
       chunks.push(chunk);
-      //console.log(chunk.toString());
     });
 
-    socat.on('end', function(exitCode) {
-      return callback(exitCode !== 0);
+    socat.on('close', function(exitCode) {
+      if (callback) {
+        return callback(exitCode !== 0, JSON.parse(chunks.join('')));
+      }
     });
 
     socat.stdin.setEncoding('utf8');
@@ -225,7 +260,7 @@
         options.right.stdin.write(rightData.join('\n'));
       }
     //} catch(err) {
-    //  console.log(d.std.node, 'Error trying to write to children', err);
+    //  console.log(d.std.port, 'Error trying to write to children', err);
     //}
 
 
@@ -318,7 +353,7 @@
   dataPort.on('connection', function(connection) {
     numDataStreams++;
     var dataStreamNum = numDataStreams;
-    //console.log(d.std.node, 'New connection: ' + dataStreamNum);
+    //console.log(d.std.port, 'New connection: ' + dataStreamNum);
 
     left  = left ||  spawn('socat', ['-', 'tcp:localhost:'+ (leftPort + 2000)]);
     right = right || spawn('socat', ['-', 'tcp:localhost:'+ (rightPort + 2000)]);
@@ -329,7 +364,7 @@
     var flushedTime, doneDisplayed = false;
     var pausedReason = null;
     var pauseInput = function(reason) {
-      //console.log(d.std.node, dataStreamNum, 'Pausing ' + reason);
+      //console.log(d.std.port, dataStreamNum, 'Pausing ' + reason);
       pausedReason = reason;
       connection.pause();
     };
@@ -339,7 +374,7 @@
     };
 
     var resumeInput = function() {
-      //console.log(d.std.node, dataStreamNum, 'Resuming ' + pausedReason);
+      //console.log(d.std.port, dataStreamNum, 'Resuming ' + pausedReason);
       pausedReason = null;
       connection.resume();
     };
@@ -348,7 +383,7 @@
     var chunks = [];
     //var dispatchLines = function() {
     //  if (isPaused() === 'TOO_MUCH_INPUT' && lines.length < 2000) {
-    //    console.log(dataStreamNum, d.std.node, 'Resuming at ' + lines.length);
+    //    console.log(dataStreamNum, d.std.port, 'Resuming at ' + lines.length);
     //    resumeInput();
     //  }
 
@@ -370,7 +405,7 @@
     //  if (chunks.length >= 10000 || numLinesRemaining === 0) {
     //    c2 = chunks;
     //    chunks = [];
-    //    console.log(dataStreamNum, d.std.node, numLinesRemaining, 'Sending: ' + c2.length);
+    //    console.log(dataStreamNum, d.std.port, numLinesRemaining, 'Sending: ' + c2.length);
     //    flushedTime = new Date();
     //    d.std.rawList.preProcess(c2, 9999, {left: left, right: right});
     //  }
@@ -387,7 +422,7 @@
       remainder = lines.pop();
 
       if (lines.length > 20000) {
-        console.log(dataStreamNum, d.std.node, 'Pausing at ' + lines.length);
+        console.log(d.std.port, dataStreamNum, 'Pausing at ' + lines.length);
         pauseInput('TOO_MUCH_INPUT');
       }
 
@@ -410,7 +445,7 @@
       lines = [];
       flushedTime = new Date();
       d.std.rawList.preProcess(chunky, 9999, {left: left, right: right}, function(err) {
-        //console.log(d.std.node, 'Closing children ' + dataStreamNum);
+        //console.log(d.std.port, 'Closing children ' + dataStreamNum);
         closed = true;
         //left.stdin.end();
         //right.stdin.end();
@@ -419,9 +454,9 @@
 
     var watchdog = function() {
       var now = new Date();
-      if (now - flushedTime > 10000) {
+      if (now - flushedTime > (10000 + (d.std.node * 10))) {
         if (lines.length > 0) {
-          console.log(d.std.node, 'Watchdog flushing ' + lines.length);
+          console.log(d.std.port, 'Watchdog flushing ' + lines.length + (haveDownstreamListeners ? '' :  '----------------'));
           var chunky = _.map(lines, function(line) { return line+ '\n'; });
           lines = [];
           flushedTime = new Date();
@@ -430,7 +465,7 @@
         } else {
           if (!doneDisplayed) {
             doneDisplayed = true;
-            //console.log(d.std.node, 'Watchdog done? ' + (now - flushedTime));
+            //console.log(d.std.port, 'Watchdog done? ' + (now - flushedTime));
           }
         }
       }
@@ -440,7 +475,7 @@
 
     var dumpDebug = function() {
       if (lines.length > 9999) {
-        console.log(d.std.node, dataStreamNum, lines.length);
+        console.log(d.std.port, dataStreamNum, lines.length);
       }
       if (!closed) {
         setTimeout(dumpDebug, 1000);
