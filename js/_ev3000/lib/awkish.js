@@ -26,7 +26,7 @@
   };
 
   var leftPort, rightPort, leftAwkish, rightAwkish;
-  var haveDownstreamListeners = (d.std.node <= 6);      // 2, 6, 14, 30, 62, 126, 254
+  var haveDownstreamListeners = (d.std.node <= 30);      // 2, 6, 14, 30, 62, 126, 254
 
   if (haveDownstreamListeners) {
     leftPort  = d.std.awkish.leftPort   = 10000 + (d.std.node*2) + 1;
@@ -126,10 +126,11 @@
       logfer1(d.std.port, '----- on finish ', selfResult && selfResult.length, leftResult && leftResult.length, rightResult && rightResult.length);
       if (selfResult && leftResult !== undefined && rightResult !== undefined) {
         // We have all the data!
-        var reply = [selfResult];
+        var reply = {};
+        reply[d.std.node] = selfResult;
 
-        if (leftResult)   { reply = reply.concat(leftResult); }
-        if (rightResult)  { reply = reply.concat(rightResult); }
+        if (leftResult)   { _.extend(reply, leftResult); }
+        if (rightResult)  { _.extend(reply, rightResult); }
 
         reply = JSON.stringify(reply);
         logfer1(d.std.port, '----- reply ', reply);
@@ -454,7 +455,7 @@
 
     var watchdog = function() {
       var now = new Date();
-      if (now - flushedTime > (10000 + (d.std.node * 10))) {
+      if (now - flushedTime > (5000 + (d.std.node * 10))) {
         if (lines.length > 0) {
           console.log(d.std.port, 'Watchdog flushing ' + lines.length + (haveDownstreamListeners ? '' :  '----------------'));
           var chunky = _.map(lines, function(line) { return line+ '\n'; });
