@@ -180,7 +180,7 @@ var main = function(undefined) {
         output += '\n';
 
         if (stats.finalResult !== 0) {
-          console.log(d.std.port, '                                                    ' + output.replace(/\n/, ''), (new Date() - options.startTime) * 0.001);
+          console.log(d.std.port, '                                                                ' + output.replace(/\n/, ''), (new Date() - options.startTime) * 0.001);
         }
 
         if (options.connection) {

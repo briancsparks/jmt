@@ -86,6 +86,8 @@
     var selfResult, leftResult, rightResult;
     var script = chunks.join('');
 
+    //connection.write(' ', 'utf8');
+
     logfer1(d.std.port, '----- Entering enqueueScript ' + script.length);
 
     // Hijack the connection's write and end function
@@ -123,7 +125,7 @@
     }
 
     var finish = function() {
-      logfer1(d.std.port, '----- on finish ', selfResult && selfResult.length, leftResult && leftResult.length, rightResult && rightResult.length);
+      logfer1(d.std.port, '----- on finish ', selfResult && selfResult.length, leftResult && _.keys(leftResult), rightResult && _.keys(rightResult));
       if (selfResult && leftResult !== undefined && rightResult !== undefined) {
         // We have all the data!
         var reply = {};
@@ -143,7 +145,7 @@
 
   var sendToPort = function(port, str, callback) {
     console.log(d.std.port, 'awkish: sending ' + str.length + ' to ' + port);
-    var socat = spawn('socat', ['-', 'tcp:localhost:'+port]);
+    var socat = spawn('socat', ['-T999.0', '-t999.0', '-', 'tcp:localhost:'+port]);
 
     var chunks = [];
     socat.stdout.on('data', function(chunk) {
@@ -152,7 +154,14 @@
 
     socat.on('close', function(exitCode) {
       if (callback) {
-        return callback(exitCode !== 0, JSON.parse(chunks.join('')));
+        var str = chunks.join(''), res;
+        try {
+          res = JSON.parse(str);
+        } catch(err) {
+          console.log(d.std.port, 'Error JSON parsing', str);
+          res = '';
+        }
+        return callback(exitCode !== 0, res);
       }
     });
 
@@ -250,9 +259,9 @@
     });
 
     if (list.length > 0) {
-      console.log(d.std.port, 'Sending data: self, left, right: ', list.length, leftData.length, rightData.length);
+      console.log(d.std.port, 'Sending data: self, left, right: ', list.length, leftData.length, rightData.length, d.std.awkish.count, d.std.port);
     }
-    //try {
+    try {
       if (leftData.length > 0) {
         options.left.stdin.write(leftData.join('\n'));
       }
@@ -260,9 +269,9 @@
       if (rightData.length > 0) {
         options.right.stdin.write(rightData.join('\n'));
       }
-    //} catch(err) {
-    //  console.log(d.std.port, 'Error trying to write to children', err);
-    //}
+    } catch(err) {
+      console.log(d.std.port, 'Error trying to write to children', err);
+    }
 
 
     //if (leftData.length > 0) {
@@ -348,16 +357,18 @@
   };
 
   // ---------- Create the data listener---------- 
-  var left, right;
-  var dataPort = net.createServer();
+  //var left, right;
+  var dataPort = net.createServer({allowHalfOpen:true});
   var numDataStreams = 0;
+  var numChunksSincePause = 0, numLinesSincePause = 0;
   dataPort.on('connection', function(connection) {
+    var left, right;
     numDataStreams++;
     var dataStreamNum = numDataStreams;
     //console.log(d.std.port, 'New connection: ' + dataStreamNum);
 
-    left  = left ||  spawn('socat', ['-', 'tcp:localhost:'+ (leftPort + 2000)]);
-    right = right || spawn('socat', ['-', 'tcp:localhost:'+ (rightPort + 2000)]);
+    left  = left ||  spawn('socat', ['-T999.0', '-t999.0', '-', 'tcp:localhost:'+ (leftPort + 2000)]);
+    right = right || spawn('socat', ['-T999.0', '-t999.0', '-', 'tcp:localhost:'+ (rightPort + 2000)]);
 
     left.stdin.setEncoding('utf8');
     right.stdin.setEncoding('utf8');
@@ -380,102 +391,127 @@
       connection.resume();
     };
 
-    var lines = [], numLines = 0;
-    var chunks = [];
-    //var dispatchLines = function() {
-    //  if (isPaused() === 'TOO_MUCH_INPUT' && lines.length < 2000) {
-    //    console.log(dataStreamNum, d.std.port, 'Resuming at ' + lines.length);
-    //    resumeInput();
-    //  }
-
-    //  if (lines.length > 0) {
-    //    var line = lines.shift();
-    //    return dispatchLine(line, numLines, lines.length, function() {
-    //      // Every so often, break out of the stack
-    //      if (numLines % 10 === 0) { return setImmediate(dispatchLines); }
-
-    //      return dispatchLines();
-    //    });
-    //  }
-    //};
-
-    //var dispatchLine = function(line, lineNum, numLinesRemaining, callback) {
-    //  var c2;
-
-    //  chunks.push(line + '\n');
-    //  if (chunks.length >= 10000 || numLinesRemaining === 0) {
-    //    c2 = chunks;
-    //    chunks = [];
-    //    console.log(dataStreamNum, d.std.port, numLinesRemaining, 'Sending: ' + c2.length);
-    //    flushedTime = new Date();
-    //    d.std.rawList.preProcess(c2, 9999, {left: left, right: right});
-    //  }
-
-    //  return callback();
-    //};
-
     var remainder = '';
-    connection.on('data', function(chunk) {
-      var numLinesOnEnter = lines.length;
-      doneDisplayed = false;
+    var numToProcessBeforePause = 40000, pauseLength = 10;
+    //if (/*d.std.node === 0 ||*/ d.std.awkish.count >= 8 * d.std.awkish.recordThreshold) {
+    if (d.std.node === 999) {
+      console.log(d.std.port, 'Fast data transfer. +++++++++++++++++');
 
-      lines = lines.concat((remainder + chunk.toString()).split('\n'));
-      remainder = lines.pop();
+      // Just split the data between the downstreams
+      connection.on('data', function(chunk) {
 
-      if (lines.length > 20000) {
-        console.log(d.std.port, dataStreamNum, 'Pausing at ' + lines.length);
-        pauseInput('TOO_MUCH_INPUT');
-      }
+        var lines = (remainder + chunk.toString()).split('\n'), len, halfLen;
+        remainder = lines.pop();
+        len = lines.length;
+        halfLen = Math.floor(lines.length / 2);
+        left.stdin.write(_.first(lines, halfLen).join('\n'));
+        right.stdin.write(_.rest(lines, halfLen).join('\n'));
 
-      if (lines.length >= 10000) {
-        pauseInput('NORMAL_PAUSE_TO_PROCESS');
-        var chunky = _.map(lines, function(line) { return line+ '\n'; });
-        lines = [];
-        flushedTime = new Date();
-        d.std.rawList.preProcess(chunky, 9999, {left: left, right: right}, function(err) {
+        numLinesSincePause += len;
+        numChunksSincePause++;
+        //console.log(d.std.port, 'data: ' + numLinesSincePause, numChunksSincePause);
+
+        if (numLinesSincePause >= numToProcessBeforePause) {
+          pauseInput('NORMAL_PAUSE_TO_PROCESS');
+
+          //console.log(d.std.port, 'Pausing 0 at: ' + numLinesSincePause, numChunksSincePause);
+
           setTimeout(function() {
+            //console.log(d.std.port, 'Resuming 0 at: ' + numLinesSincePause, numChunksSincePause);
+            numLinesSincePause = numChunksSincePause = 0;
             resumeInput();
-          }, 100);
-        });
-      }
-    });
-
-    var closed = false;
-    connection.on('end', function() {
-      var chunky = _.map(lines, function(line) { return line+ '\n'; });
-      lines = [];
-      flushedTime = new Date();
-      d.std.rawList.preProcess(chunky, 9999, {left: left, right: right}, function(err) {
-        //console.log(d.std.port, 'Closing children ' + dataStreamNum);
-        closed = true;
-        //left.stdin.end();
-        //right.stdin.end();
+          }, pauseLength);
+        }
       });
-    });
 
-    var watchdog = function() {
-      var now = new Date();
-      if (now - flushedTime > (5000 + (d.std.node * 10))) {
-        if (lines.length > 0) {
-          console.log(d.std.port, 'Watchdog flushing ' + lines.length + (haveDownstreamListeners ? '' :  '----------------'));
+      connection.on('end', function() {
+        var lines = remainder.split('\n'), len;
+        len = Math.floor(lines.length);
+        left.stdin.write(_.first(lines, len).join('\n'));
+        right.stdin.write(_.rest(lines, len).join('\n'));
+
+        pauseInput('NORMAL_PAUSE_TO_PROCESS');
+
+        //console.log(d.std.port, 'Pausing 0 at: ' + numLinesSincePause, numChunksSincePause);
+
+        setTimeout(function() {
+          //console.log(d.std.port, 'Resuming 0 at: ' + numLinesSincePause, numChunksSincePause);
+          numLinesSincePause = numChunksSincePause = 0;
+          resumeInput();
+        }, pauseLength);
+      });
+
+    } else {
+      var lines = [], numLines = 0;
+
+      var chunks = [];
+      connection.on('data', function(chunk) {
+        var numLinesOnEnter = lines.length;
+        doneDisplayed = false;
+
+        lines = lines.concat((remainder + chunk.toString()).split('\n'));
+        remainder = lines.pop();
+        var pauseCount = d.std.node === 0 ? 40000 : 10000;
+
+        if (lines.length >= pauseCount) {
+          if (d.std.node === 0) {
+            pauseInput('NORMAL_PAUSE_TO_PROCESS');
+          }
+
           var chunky = _.map(lines, function(line) { return line+ '\n'; });
           lines = [];
           flushedTime = new Date();
           d.std.rawList.preProcess(chunky, 9999, {left: left, right: right}, function(err) {
+            if (d.std.node === 0) {
+              setTimeout(function() {
+                resumeInput();
+              }, 250);
+            }
           });
-        } else {
-          if (!doneDisplayed) {
-            doneDisplayed = true;
-            //console.log(d.std.port, 'Watchdog done? ' + (now - flushedTime));
+        }
+      });
+
+      var closed = false;
+      connection.on('end', function() {
+        var chunky = _.map(lines, function(line) { return line+ '\n'; });
+        lines = [];
+        flushedTime = new Date();
+        console.log(d.std.port, 'Writing before closing children ' + dataStreamNum);
+        d.std.rawList.preProcess(chunky, 9999, {left: left, right: right}, function(err) {
+          console.log(d.std.port, 'Closing children ' + dataStreamNum);
+          closed = true;
+          left.stdin.end();
+          left = null;
+          right.stdin.end();
+          right = null;
+          connection.end();
+        });
+      });
+
+      var watchdog = function() {
+        var now = new Date();
+        if (now - flushedTime > (10000 + (d.std.node * 10))) {
+          if (lines.length > 0) {
+            console.log(d.std.port, 'Watchdog flushing ' + lines.length + (haveDownstreamListeners ? '----------------' : ''));
+            var chunky = _.map(lines, function(line) { return line+ '\n'; });
+            lines = [];
+            flushedTime = new Date();
+            d.std.rawList.preProcess(chunky, 9999, {left: left, right: right}, function(err) {
+            });
+          } else {
+            if (!doneDisplayed) {
+              doneDisplayed = true;
+              //console.log(d.std.port, 'Watchdog done? ' + (now - flushedTime));
+            }
           }
         }
-      }
-      setTimeout(watchdog, 100);
-    };
-    watchdog();
+        setTimeout(watchdog, 100);
+      };
+      //watchdog();
+    }
 
     var dumpDebug = function() {
-      if (lines.length > 9999) {
+      if (lines  && lines.length > 0) {
         console.log(d.std.port, dataStreamNum, lines.length);
       }
       if (!closed) {
