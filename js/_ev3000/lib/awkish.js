@@ -409,7 +409,7 @@
   };
 
   d.std.skwish = function(x, dictNum) {
-    var i, l, keys, key, value, numAdded = 0;
+    var i, l, keys, key, value, m, numAdded = 0;
     var ret;
 
     if (_.isObject(x) && !_.isArray(x)) {
@@ -423,13 +423,16 @@
         if (value === '')   { continue; }
 
         if (_.isString(value)) {
-          ret[key] = d.std.rawList.strings[dictNum][value] = d.std.rawList.strings[dictNum][value] || value; 
+          if (/^[0-9]+$/.exec(value)) {
+            ret[key] = parseInt(value, 10);
+          //} else if ((m = /^\$([0-9]+)$/.exec(value))) {
+          //  ret[key] = parseInt(m[1], 10);
+          } else {
+            ret[key] = d.std.rawList.strings[dictNum][value] = d.std.rawList.strings[dictNum][value] || value; 
+          }
+
           numAdded++;
           continue;
-        }
-
-        if (/^[0-9]+$/.exec(value)) {
-          ret[key] = parseInt(value, 10);
         }
 
         ret[key] = d.std.skwish(x[key], dictNum);
