@@ -67,8 +67,8 @@ var main = function(undefined) {
             options.startTime = new Date();
             options.resultName = resultName;
 
-            //var stats = self.exec(lines.join('\n'));
-            return self.exec(lines.join('\n'), function(err, stats) {
+            //return self.exec(lines.join('\n'), function(err, stats) {
+            return d.std.execScript(lines.join('\n'), function(err, stats) {
               return d.std.publishResult(stats, options, function(err) {
                 setImmediate(dispatch);
               });
@@ -133,10 +133,6 @@ var main = function(undefined) {
               }
             }
 
-            //if (userResult_ === undefined || userResult_ === null) {
-            //  console.log(d.std.port, 'No user results: ', _.keys($_), _.keys($h), $a.length, $n);
-            //}
-
             return callback(err, _stats);
           };
 
@@ -184,7 +180,7 @@ var main = function(undefined) {
         }
 
         if (options.connection) {
-          options.connection.write(JSON.stringify(stats.finalResult), 'utf8');
+          options.connection.write(JSON.stringify(stats.finalResult || {just: '** No finalResult **'}), 'utf8');
           options.connection.end();
         }
 
@@ -229,7 +225,11 @@ var main = function(undefined) {
       });
 
       d.std.enqueueScript = function(chunks, connection) {
-        runner.enqueue(chunks, connection);
+        return runner.enqueue(chunks, connection);
+      };
+
+      d.std.execScript = function() {
+        return runner.exec.apply(runner, arguments);
       };
 
       console.log('Listening on ' + d.std.port);

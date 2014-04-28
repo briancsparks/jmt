@@ -75,20 +75,10 @@
 
   }
 
-  var logfer1 = function() {
-    //if (d.std.port === 10000 || d.std.port === 10001 || d.std.port === 10003 || d.std.port === 10007) {
-    //  console.log.apply(this, arguments);
-    //}
-  };
-
   var oldEnqueueScript = d.std.enqueueScript;
   d.std.enqueueScript = function(chunks, connection) {
     var selfResult, leftResult, rightResult;
     var script = chunks.join('');
-
-    //connection.write(' ', 'utf8');
-
-    logfer1(d.std.port, '----- Entering enqueueScript ' + script.length);
 
     // Hijack the connection's write and end function
     var oldEnd = connection.end;
@@ -97,7 +87,6 @@
       connection.end   = oldEnd;
 
       selfResult = JSON.parse(selfResult.join('')) || arguments[0] || '';
-      logfer1(d.std.port, '----- on end ' + JSON.stringify(selfResult));
       return finish();
     }
 
@@ -108,16 +97,13 @@
     };
 
     if (haveDownstreamListeners) {
-      logfer1(d.std.port, '----- Sending downstream ' + script.length);
       sendToPort(d.std.awkish.leftPort, script, function(err, result) {
         leftResult = result;
-        logfer1(d.std.port, '----- on lend ' + JSON.stringify(leftResult));
         return finish();
       });
 
       sendToPort(d.std.awkish.rightPort, script, function(err, result) {
         rightResult = result;
-        logfer1(d.std.port, '----- on rend ' + JSON.stringify(rightResult));
         return finish();
       });
     } else {
@@ -125,22 +111,120 @@
     }
 
     var finish = function() {
-      logfer1(d.std.port, '----- on finish ', selfResult && selfResult.length, leftResult && _.keys(leftResult), rightResult && _.keys(rightResult));
-      if (selfResult && leftResult !== undefined && rightResult !== undefined) {
-        // We have all the data!
-        var reply = {};
-        reply[d.std.node] = selfResult;
+      var reply = {};
 
-        if (leftResult)   { _.extend(reply, leftResult); }
-        if (rightResult)  { _.extend(reply, rightResult); }
+      if (selfResult && leftResult !== undefined && rightResult !== undefined) {
+        if (_.isObject(selfResult) && 'just' in selfResult) {
+          reply = selfResult.just;
+          d.r_ = selfResult.just;
+        } else {
+          // We have all the data!
+          reply[d.std.node] = selfResult;
+
+          if (leftResult)   { _.extend(reply, leftResult); }
+          if (rightResult)  { _.extend(reply, rightResult); }
+          d.r_ = reply;
+        }
 
         reply = JSON.stringify(reply);
-        logfer1(d.std.port, '----- reply ', reply);
         return oldEnd.call(connection, reply, 'utf8');
       }
     };
 
     return oldEnqueueScript(chunks, connection);
+  };
+
+  d.std.execScript = function(script, callback) {
+    var $_ = {}, $n = 0, $a = [], $h = {};
+    var _stats = {userResult: null};
+
+    _stats.startTime = new Date();
+    _stats.numProcessed = 0;
+    _stats.perf = {};
+
+    var histo = function(bucket, value_) {
+      var value = value_ || 1;
+      $h[bucket] = ($h[bucket] || 0) + value;
+    };
+
+    var eachItem = function(fn, doCount) {
+      _.each(d.list, function(l, lIndex) {
+        _.each(l, function(x, xIndex) {
+          if (doCount) {
+            _stats.numProcessed++;
+          }
+          fn(x, xIndex, l, lIndex);
+        });
+      });
+    };
+
+    var filter = function(filterFn, fn) {
+      eachItem(function(x, xIndex, l, lIndex) {
+        var good = filterFn.apply(this, arguments);
+        if (good) {
+          _stats.numProcessed++;
+          fn.apply(this, arguments);
+        }
+      }, false);
+    };
+
+    // This is the function to get results
+    var __r_ = function() {
+      if (d.std.node === 0) {
+        return {just: d.r_} || {};
+      } else {
+        return {};
+      }
+    };
+
+    var localCallback = function(err, userResult_) {
+      var userResult = userResult_;
+      if (userResult === undefined) {
+        userResult = '*** No results provided ***';
+      }
+      _stats.finalResult = _stats.userResult = userResult;
+
+      _stats.endTime = new Date();
+      _stats.elapsed = _stats.endTime - _stats.startTime;
+
+      // Try and be smart about what the user did
+      if (userResult_ === undefined || userResult_ === null) {
+        if (_.keys($_).length > 0) {
+          _stats.finalResult = $_;
+        } else if (_.keys($h).length > 0) {
+          if (!_.isArray($h)) {
+            $h = _.sortBy(
+                _.map($h,
+                  function(v,k) { return {bucket:k, count:v}; }),
+                  function(x) { return -x.count; }
+            );
+          }
+          _stats.finalResult = $h;
+        } else if ($a.length > 0) {
+          _stats.finalResult = $a;
+        } else if ($n !== 0) {
+          _stats.finalResult = $n;
+        }
+      }
+
+      return callback(err, _stats);
+    };
+
+    var getCallbackWasCalled = false;
+    var getCallback = function() {
+      getCallbackWasCalled = true;
+      return localCallback;
+    };
+
+    try {
+      _stats.finalResult = _stats.userResult = eval(script);
+    } catch(err) {
+      _stats = _.extend(_stats, {error: err});
+    }
+
+    if (!getCallbackWasCalled) {
+      return localCallback(_stats.error, _stats.userResult);
+    }
   };
 
   var sendToPort = function(port, str, callback) {
@@ -169,6 +253,7 @@
     socat.stdin.write(str);
     socat.stdin.end();
   };
+
 
   d.std.rawList = {};
 
