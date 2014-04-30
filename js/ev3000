@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/home/scotty/local/bin/node --expose_gc
 /**
  * vim: filetype=javascript :
  */
@@ -180,7 +180,11 @@ var main = function(undefined) {
         }
 
         if (options.connection) {
-          options.connection.write(JSON.stringify(stats.finalResult || {just: '** No finalResult **'}), 'utf8');
+          if (_.isString(stats.finalResult)) {
+            options.connection.write(stats.finalResult, 'utf8');
+          } else {
+            options.connection.write(JSON.stringify(stats.finalResult || {just: '** No finalResult **'}), 'utf8');
+          }
           options.connection.end();
         }
 

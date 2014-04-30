@@ -86,7 +86,11 @@
       connection.write = oldWrite;
       connection.end   = oldEnd;
 
-      selfResult = JSON.parse(selfResult.join('')) || arguments[0] || '';
+      try {
+        selfResult = JSON.parse(selfResult.join('')) || arguments[0] || '';
+      } catch(err) {
+        selfResult = selfResult.join('');
+      }
       return finish();
     }
 
@@ -573,6 +577,7 @@
           right.stdin.end();
           right = null;
           connection.end();
+          global.gc();
         });
       });
 
