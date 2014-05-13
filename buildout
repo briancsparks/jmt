@@ -278,7 +278,6 @@ else
       cd zz_packages && curl 'ftp://ftp.vim.org/pub/vim/unix/vim-7.4.tar.bz2' \
         | tar xvj && ln -s vim74 vim && cd vim \
         && ./configure --with-features=huge --enable-rubyinterp --enable-pythoninterp --enable-perlinterp --prefix=/usr && make -j`grep -c ^processor /proc/cpuinfo` && sudo make install; cd
-      cd; cd .vim/ && curl -skL 'http://www.vim.org/scripts/download_script.php?src_id=10433' | tar xvz; cd
     fi
 
     # Configure vim
@@ -286,6 +285,7 @@ else
     if ! [[ -d ~/.vim/bundle ]]
     then
       mkdir -p ~/.vim/autoload ~/.vim/bundle && curl -SLso ~/.vim/autoload/pathogen.vim https://raw.github.com/tpope/vim-pathogen/master/autoload/pathogen.vim
+      cd; cd .vim/ && curl -skL 'http://www.vim.org/scripts/download_script.php?src_id=10433' | tar xvz; cd
       cd ~/.vim/bundle \
         && git clone git@github.com:tpope/vim-rails.git \
         && git clone git@github.com:tpope/vim-bundler.git \
@@ -299,7 +299,7 @@ else
     cd
     if ! [[ -d zz_packages/node ]]
     then
-      cd zz_packages && git clone git@github.com:joyent/node.git && cd node && git checkout tags/v0.10.19 && ./configure --prefix=${HOME}/local && make -j`grep -c ^processor /proc/cpuinfo` && sudo make install
+      cd zz_packages && git clone git@github.com:joyent/node.git && cd node && git checkout tags/v0.10.19 && ./configure --prefix=${HOME}/local && make -j`grep -c ^processor /proc/cpuinfo` && make install
     fi
 
     # Redis-server
