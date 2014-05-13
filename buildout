@@ -154,14 +154,14 @@ else
       sudo userdel -r ubuntu
     fi
 
-    # Install rudimentary stuff
+    # ---------- Install rudimentary stuff ----------
     cd
     if ! dpkg -s git-core 2> /dev/null > /dev/null
     then
       sudo apt-get install -y libreadline6 git-core build-essential
     fi
 
-    # Grab dotfiles
+    # ---------- Grab dotfiles ----------
     cd
     if ! [[ -d dotfiles ]]
     then
@@ -169,7 +169,7 @@ else
       git clone git@github.com:briancsparks/dotfiles.git && cd dotfiles && ls -a | grep -v git | xargs -L 1 -r -I {} cp {} ../; cd
     fi
 
-    # Get ack
+    # ---------- Get ack ----------
     cd
     if ! [[ -x ~/local/bin/ack ]]
     then
@@ -250,7 +250,7 @@ else
     #  exit 0
     #fi
 
-    # Install basics
+    # ---------- Install basics ----------
     cd
     if ! dpkg -s socat 2> /dev/null > /dev/null
     then
@@ -268,41 +268,69 @@ else
       exit 0
     fi
 
+    #
+    # ---------- First, we need VIM! ----------
+    #
+    # But, of course, we want to build it with Ruby support, so we build ruby 1.9.3 first.
+    #
+    # Then, we have to remove the system vi / vim
+    #
+
     # Compile Ruby/vim
     cd
     if ! [[ -d zz_packages/vim74 ]]
     then
+
+      # Get Ruby 1.9.3 source, into the zz_packages dir, untar, configure, make, install
       mkdir -p zz_packages && cd zz_packages && curl "http://cache.ruby-lang.org/pub/ruby/1.9/ruby-1.9.3-p194.tar.gz" \
         | tar -xvz && ln -s ruby-1.9.3-p194 ruby && cd ruby && ./configure && make -j`grep -c ^processor /proc/cpuinfo` && sudo make install; cd
+
+      # Remove ("purge") the system vi / vim
       sudo apt-get purge -y vim vim-runtime gvim vim-tiny vim-common vim-gui-common
+
+      # Get VIM 7.4 into the zz_packages dir, untar, configure with Ruby and others, make, install
       cd zz_packages && curl 'ftp://ftp.vim.org/pub/vim/unix/vim-7.4.tar.bz2' \
         | tar xvj && ln -s vim74 vim && cd vim \
         && ./configure --with-features=huge --enable-rubyinterp --enable-pythoninterp --enable-perlinterp --prefix=/usr && make -j`grep -c ^processor /proc/cpuinfo` && sudo make install; cd
     fi
 
-    # Configure vim
+    # Add the good VIM plugins.
     cd
     if ! [[ -d ~/.vim/bundle ]]
     then
+
+      # Pathogen-ify
       mkdir -p ~/.vim/autoload ~/.vim/bundle && curl -SLso ~/.vim/autoload/pathogen.vim https://raw.github.com/tpope/vim-pathogen/master/autoload/pathogen.vim
+
+      # Ack
       cd; cd .vim/ && curl -skL 'http://www.vim.org/scripts/download_script.php?src_id=10433' | tar xvz; cd
+
+      # Tim Pope is a VIM god.
       cd ~/.vim/bundle \
         && git clone git@github.com:tpope/vim-rails.git \
         && git clone git@github.com:tpope/vim-bundler.git \
         && git clone git@github.com:tpope/vim-fugitive.git \
-        && git clone git@github.com:tpope/pry-editline.git \
-        && git clone git://git.wincent.com/command-t.git command-t; cd
+        && git clone git@github.com:tpope/pry-editline.git
+
+      # Command-T
+      cd ~/.vim/bundle \
+        && git clone git://git.wincent.com/command-t.git command-t
       cd ~/.vim/bundle/command-t/ruby/command-t && ruby extconf.rb && make -j`grep -c ^processor /proc/cpuinfo`; cd
+
+      # Syntastic
+      cd ~/.vim/bundle && git clone https://github.com/scrooloose/syntastic.git
+
+      cd
     fi
 
-    # Compile Node.js
+    # ---------- Compile Node.js ----------
     cd
     if ! [[ -d zz_packages/node ]]
     then
       cd zz_packages && git clone git@github.com:joyent/node.git && cd node && git checkout tags/v0.10.19 && ./configure --prefix=${HOME}/local && make -j`grep -c ^processor /proc/cpuinfo` && make install
     fi
 
-    # Redis-server
+    # ---------- Redis-server ----------
     cd
     if ! [[ -d zz_packages/redis ]]
     then
@@ -311,7 +339,7 @@ else
       sudo redis-server /etc/redis.conf
     fi
 
-    # nginx & Passenger
+    # ---------- nginx & Passenger ----------
     if [[ $forced == nginx ]]
     then
 
@@ -330,7 +358,7 @@ else
       fi
     fi
 
-    # ImageMagick
+    # ---------- ImageMagick ----------
     if [[ $forced == ImageMagick ]]
     then
 
@@ -350,7 +378,7 @@ else
       fi
     fi
     
-    # hplip
+    # ---------- hplip ----------
     if [[ $forced == hplip ]]
     then
 
@@ -361,7 +389,7 @@ else
         echo DEVICE_URI=x >> ~/.profile
 
         sudo apt-get install -y libcups2 cups libcups2-dev cups-bsd cups-client libcupsimage2-dev libdbus-1-dev ghostscript \
-                                libsnmp-dev libtool libusb-dev python-imaging policykit-1 policykit-1-gnome\
+                                libsnmp-dev libtool libusb-dev python-imaging policykit-1 policykit-1-gnome \
                                 python-qt4 python-qt4-dbus python-dbus python-gobject python-dev python-notify \
                                 a2ps libtiff4-dev libfreetype6-dev python python-reportlab libsane libsane-dev sane-utils xsane
 
@@ -380,7 +408,7 @@ else
     fi
 
 
-    # MySQL server
+    # ---------- MySQL server ----------
     if [[ $forced == mysql ]]
     then
       cd
@@ -391,7 +419,7 @@ else
       fi
     fi
 
-    # Memcached-server
+    # ---------- Memcached-server ----------
     if [[ $forced == memcache ]]
     then
       cd
