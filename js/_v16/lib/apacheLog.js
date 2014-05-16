@@ -49,10 +49,6 @@
           }
         );
 
-        return next();
-      },
-
-      function(next) {
         compactData();
         return next();
       },

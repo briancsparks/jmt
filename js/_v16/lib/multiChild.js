@@ -45,7 +45,11 @@
           } else if (/^([0-9]+)?\.[0-9]+$/.exec(field)) {
             item[i] = parseFloat(field);
           } else {
-            item[i] = dicts[i][field] = (dicts[i][field] || field);
+            if (cacheRawField(i, field)) {
+              item[i] = dicts[i][field] = (dicts[i][field] || field);
+            } else {
+              item[i] = field;
+            }
           }
         });
 
@@ -54,6 +58,11 @@
 
       if (global.gc) { global.gc(); }
     }
+  };
+
+  cacheRawField = global.cacheRawField || function(fieldNum, field) {
+    //return true;
+    return fieldNum !== 6 && fieldNum !== 10;
   };
 
   var dTableNum  = 0;
