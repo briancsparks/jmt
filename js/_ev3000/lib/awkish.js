@@ -26,7 +26,7 @@
   };
 
   var leftPort, rightPort, leftAwkish, rightAwkish;
-  var haveDownstreamListeners = (d.std.node <= 30);      // 2, 6, 14, 30, 62, 126, 254
+  var haveDownstreamListeners = (d.std.node <= 6);      // 2, 6, 14, 30, 62, 126, 254
 
   if (haveDownstreamListeners) {
     leftPort  = d.std.awkish.leftPort   = 10000 + (d.std.node*2) + 1;
@@ -86,9 +86,13 @@
       connection.write = oldWrite;
       connection.end   = oldEnd;
 
-      selfResult = JSON.parse(selfResult.join('')) || arguments[0] || '';
+      try {
+        selfResult = JSON.parse(selfResult.join('')) || arguments[0] || '';
+      } catch(err) {
+        selfResult = selfResult.join('');
+      }
       return finish();
-    }
+    };
 
     var oldWrite = connection.write;
     connection.write = function(chunk) {
@@ -573,6 +577,7 @@
           right.stdin.end();
           right = null;
           connection.end();
+          global.gc();
         });
       });
 

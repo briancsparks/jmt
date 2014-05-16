@@ -5,28 +5,47 @@ tmp_dir="/tmp/jmt/aws/$(basename $0)"
 echo $tmp_dir
 mkdir -p "$tmp_dir"
 
-just_value()
-{
-  cat - | grep $1 | cut -d: -f2 | tr -d ' ",'
-}
-
 instance_type="m3.xlarge"
 #root_disk="ebs"
+key_name="loki-prod-east"
+security_groups="$key_name"
+user_region="east"
+region="us-east-1"
+user_zone="c"
 
 for arg in "$@"; do case $arg in
   --instance-type=*)  instance_type="${arg#*=}";      shift;;
   --root-disk=*)      root_disk="${arg#*=}";          shift;;
+  --key-name=*)       key_name="${arg#*=}";           shift;;
+  --sec-group=*)      security_groups="${arg#*=}";    shift;;
+  --region=*)         user_region="${arg#*=}";        shift;;
+  --zone=*)           user_zone="${arg#*=}";          shift;;
 
   --) shift; break;;
   *)                    echo "$arg"; shift;;
 
 esac; done
 
-echo "$instance_type $root_disk"
+if [ "$user_region" == "east" ]; then
+  region="us-east-1"
+  key_name="loki-prod-east"
+  security_groups="$key_name"
 
-aws_ami_1204_ebs="ami-5db4a934"
-aws_ami_1204_instance_store="ami-2f8f9246"
-aws_ami_1204_hvm="ami-07809d6e"
+  aws_ami_1204_ebs="ami-5db4a934"
+  aws_ami_1204_instance_store="ami-2f8f9246"
+  aws_ami_1204_hvm="ami-07809d6e"
+elif [ "$user_region" == "west" ]; then
+  region="us-west-2"
+  key_name="loki-prod-west2"
+  security_groups="$key_name"
+
+  aws_ami_1204_ebs="ami-22e08b12"
+  aws_ami_1204_instance_store="ami-9eed86ae"
+  aws_ami_1204_hvm="ami-82e289b2"
+fi
+
+zone="${region}${user_zone}"
+echo "$instance_type $root_disk"
 
 if echo "$instance_type" | grep '^r' 2>&1 > /dev/null; then
   if [ "$root_disk" == "ebs" ]; then
@@ -43,23 +62,29 @@ else
   fi
 fi
 
-key_name="loki-prod-east"
-security_groups="$key_name"
+cat <<EOF >$tmp_dir/user_data_file
+#!/bin/bash -ex
+user=scotty
+usermod  -l \$user ubuntu
+groupmod -n \$user ubuntu
+usermod  -d /home/\$user -m \$user
+if [ -f /etc/sudoers.d/90-cloudimg-ubuntu ]; then
+  mv /etc/sudoers.d/90-cloudimg-ubuntu /etc/sudoers.d/90-cloud-init-users
+fi
+perl -pi -e "s/ubuntu/\$user/g;" /etc/sudoers.d/90-cloud-init-users
+EOF
 
-aws ec2 run-instances "--image-id" "$ami" "--count" 1 "--instance-type" "$instance_type" "--key-name" $key_name "--security-groups" "$security_groups" > "$tmp_dir/run_result"
-
-instance_id=`cat "$tmp_dir/run_result" | just_value "InstanceId"`
+instance_id=$(aws ec2 run-instances "--image-id" "$ami" "--count" 1 "--instance-type" "$instance_type" "--key-name" $key_name "--security-groups" "$security_groups" --block-device-mapping '[{"DeviceName":"/dev/sdb", "VirtualName":"ephemeral0"}, {"DeviceName":"/dev/sdc", "VirtualName":"ephemeral1"}, {"DeviceName":"/dev/sdd", "VirtualName":"ephemeral2"}, {"DeviceName":"/dev/sde", "VirtualName":"ephemeral3"}]' --profile "$user_region" --user-data "file://$tmp_dir/user_data_file" --query 'Instances[*].InstanceId')
 echo $instance_id
 
 state="looking"
 while [ "$state" != "running" ]; do
   if [ "$state" != "running" ]; then echo "$(date)   $state"; fi
-  aws ec2 describe-instances --instance-ids "$instance_id" > "$tmp_dir/describes"
-  state=`cat "$tmp_dir/describes" | grep '"Name"' | just_value '.'`
+  state=$(aws ec2 describe-instances --instance-ids "$instance_id" --query 'Reservations[0].Instances[0].State.Name' --profile "$user_region" | sed 's/"//g')
   sleep 0.1
 done
 
-dns_name=`cat "$tmp_dir/describes" | just_value PublicDnsName`
+dns_name=$(aws ec2 describe-instances --instance-ids "$instance_id" --query 'Reservations[0].Instances[0].PublicDnsName' --profile "$user_region" | sed 's/"//g')
 echo $dns_name
 
 ## To use ephemeral drives: (Look at what is attached (fdisk), format, mount)
