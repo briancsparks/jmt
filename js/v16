@@ -1,0 +1,224 @@
+#!/usr/bin/env node
+
+/* vim: filetype=javascript :
+ */
+
+// ---------- The provided globals: basically all useful classes ----------
+var _             = require('underscore');
+var glob          = require('glob');
+var util          = require('util');
+var EventEmitter  = require('events').EventEmitter;
+var fs            = require('fs');
+var path          = require('path');
+var net           = require('net');
+var urlLib        = require('url');
+var exec          = require('child_process').exec;
+var spawn         = require('child_process').spawn;
+var zlib          = require('zlib');
+var os            = require('os');
+var sg            = require('./utils/sg');
+
+var ARGV          = sg.ARGV();
+
+// An object to hold the user-created globals
+var v16_g = {};
+
+//// Magic!!  The function that actually calls eval
+//var _evalIt_ = function(fnStr, async /*, callback*/) {
+//  try {
+//    return (arguments[2])(null, eval(fnStr));
+//  } catch(err) {
+//    console.error('Error ' + util.inspect(err));
+//    return (arguments[2])(err);
+//  }
+//};
+
+var init, clear;
+
+// But we do need a "system" namespace
+var __sys = {
+  // Magic!!  The function that actually calls eval
+  evalIt_ : function(fnStr, async /*, callback*/) {
+    if (!ARGV.no_catch) {
+      try {
+        return (arguments[2])(null, eval(fnStr));
+      } catch(err) {
+        console.error('Error ' + util.inspect(err));
+        return (arguments[2])(err);
+      }
+    } else {
+      return (arguments[2])(null, eval(fnStr));
+    }
+  }
+};
+
+// ---------- ----------
+//
+// NOTE: All the weird locations and naming is an attempt to keep
+// the global namespace as clear as possible for the script.
+//
+// 1. __sys.evalIt_ takes as arguments the only two variables it needs (though it is passed
+//    three variables.)  fnStr is the script to eval, async gives the script the ability
+//    to run async or not.
+// 2. __sys.evalIt_ takes three arguments, but the third remains unnamed.
+// 3. All other variables and functions are hidden in the following immediate-executing
+//    function.
+
+// ---------- The functions and stuff to handle eval'ing ----------
+(function() {
+
+  // Magic!!  The function that calls the function that calls eval
+  //
+  // The complexity of this function is to allow the script to run
+  // asyncronously or not, and to let __sys.evalIt_ be the functino to
+  // invoke eval.
+  __sys.evalIt = function(fnStr, callback) {
+
+    var asyncWasCalled = false, numTimesCbCalled = 0;
+
+    var callback_ = function() {
+      numTimesCbCalled++;
+      if (numTimesCbCalled > 1) {
+        console.error('EEEEEEEEEEEEEEEEEEEEError! callback_ called too many times !!!!!!!!!!!!!!!!!!!!!!! ');
+      }
+      //console.trace('cb2 ' + numTimesCbCalled);
+
+      return callback.apply(this, arguments);
+    };
+
+    var async = function() {
+      asyncWasCalled = true;
+      return callback_;
+    };
+
+    return __sys.evalIt_(fnStr, async, function(err, result) {
+
+      // If the script did not operate asyncronously, do it for them.
+      if (!asyncWasCalled) {
+        return callback_.apply(this, arguments);
+      }
+    });
+  };
+
+  // Make a variable eval-able
+  var evalAble = function(name, value_) {
+    var value = value_ || {};
+
+    if (v16_g[name]) {
+      console.log('Xinit: ' + name + ' <> ' + util.inspect(value) + ' !! Already: ' + util.inspect(v16_g[name]));
+      return v16_g[name];
+    }
+
+    console.log('init: ' + name + ' = ' + util.inspect(value));
+    return (v16_g[name] = value);
+  };
+
+  // Make a variable visible to scripts
+  __sys.init = function(name, value) {
+    var ret = evalAble(name, value);
+
+    // This injects the name into this file's global name space, making it available
+    // above, in __sys.evalIt_()
+    eval(name + ' = v16_g["' + name + '"];');
+
+    return ret;
+  };
+
+  init = function() {
+    return __sys.init.apply(this, arguments);
+  };
+
+  // Remove a variable
+  __sys.clear = function(name) {
+    delete v16_g[name];
+    eval(name + ' = (function(){}())');
+  };
+
+  clear = function() {
+    return __sys.clear.apply(this, arguments);
+  };
+
+  // Send a chunk of data to the socket
+  __sys.sendData = function(data, options_, callback) {
+    var options = _.extend({allowHalfOpen:true}, options_ || {});
+    var numEnds = 0, client;
+    var chunks = [];
+
+    var main_ = function() {
+      client  = net.connect(options);
+
+      client.on('connect', function() {
+        client.write(data);
+        client.end();
+        numEnds++;
+        return done();
+      });
+
+      client.on('data', function(chunk) {
+        chunks.push(chunk);
+      });
+
+      client.on('end', function() {
+        numEnds++;
+        return done();
+      });
+
+      client.on('error', function(err) {
+        //console.error('~~ error ' + util.inspect(err));
+        return callback(err);
+      });
+    };
+
+    var done = function() {
+      if (numEnds !== 2) { return; }
+
+      /* otherwise */
+      return callback(null, chunks.join('').toString());
+    };
+
+    return main_();
+  };
+
+  // Listen
+  var listenForScripts = function(port_) {
+    var port = port_ || 59341;   // s(5) g(9) e(3) va(4) l(1) === 'sgeval'
+
+    var server = net.createServer({allowHalfOpen:true});
+
+    server.on('connection', function(connection) {
+
+      var chunks = [], length = 0;
+      connection.on('data', function(chunk) {
+        chunks.push(chunk);
+        length += chunk.length;
+      }); 
+
+      connection.on('end', function() {
+        return __sys.evalIt(chunks.join('').toString(), function(err, result_) {
+          var result = result_ || ''; 
+          if (typeof result === 'number') {
+            result = result.toString();
+          }
+
+          if (typeof result !== 'string') {
+            result = JSON.stringify(result);
+          }
+
+          connection.write(result);
+          connection.end();
+        }); 
+
+      }); 
+    }); 
+
+    console.log('Listening on ' + port);
+    server.listen(port);
+
+    return server;
+  };
+
+  listenForScripts(ARGV.port);
+
+}());
+
+

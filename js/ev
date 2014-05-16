@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+
+if [ -f "$1" ]; then
+  cat $1 | socat -t9999 -T9999 - tcp:localhost:59341
+else
+  echo "$*" | socat -t9999 -T9999 - tcp:localhost:59341
+fi
+
+
