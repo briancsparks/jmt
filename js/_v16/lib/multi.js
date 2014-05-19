@@ -113,7 +113,7 @@
     sendScript_();
   };
 
-  var sendScriptToAll = function(script, callback) {
+  sendScriptToAll = function(script, callback) {
     var results = _.map(_.range(multi.count), function(x) { return ''; });
 
     sg.__eachll(_.range(multi.count),
@@ -130,6 +130,45 @@
         return callback(null, results);
       }
     );
+  };
+
+  sendScriptToAllJSON = function(script, callback) {
+    var results = _.map(_.range(multi.count), function(x) { return {}; });
+
+    sg.__eachll(_.range(multi.count),
+      function(childNum, nextChild) {
+        return sendScript(script, childNum, function(err, result) {
+          if (!err) {
+            try {
+              results[childNum] = JSON.parse(result);
+            } catch(err) {
+              results[childNum] = {error: 'NOTJSON', err:err, result:result};
+            }
+          }
+          return nextChild();
+        });
+      },
+
+      function done() {
+        return callback(null, results);
+      }
+    );
+  };
+
+  evaluate = function(fn, callback) {
+    var fnStr = '(' + fn.toString() + '());';
+    return sendScriptToAllJSON(fnStr, callback);
+  };
+
+  scatterGather = function(childFn, gatherFn, doneFn) {
+    var fnStr = '(' + childFn.toString() + '());';
+    return sendScriptToAllJSON(fnStr, function(err, results) {
+      _.each(results, function(result, childNum) {
+        gatherFn.apply(this, arguments);
+      });
+
+      return doneFn(err);
+    });
   };
 
   // ---------- Create function to parcel out data ----------

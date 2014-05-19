@@ -1,0 +1,21 @@
+
+On startup of a machine:
+
+# Copy to tmp
+mkdir -p /tmp/logs/raw /tmp/logs/data && cd /tmp/logs/raw && rsync -rv ~/logs3/data/* ./ && find -type f | grep gz$ | xargs gunzip
+find -type d | while read d; do mkdir -p ../data/$d; done;
+find -type f | grep -v gz$ | sort | while read f; do echo $f 1>&2; awk 'NF!= 10 && $12!~/^(ELB|Apache|NewRelic)/ && $7!~/^\/(assets|generate[tT]ext[lL]ayer)/' $f > ../data/${f}; done
+
+# Watch processes & their memory usage
+for ((;;)); do echo "$(date)  "; ps aux | grep -v grep | grep v16 | grep node | awk -F'=' '{print $2" "$0}' | awk '{print $1" " $7}' | sort -n; ps aux | grep -v grep | grep socat | wc -l; sleep 2; done
+
+
+# Start the long-running processes
+cls; killall node; node --expose-gc ~/dev/jmt/js/v16 --no_catch
+
+jmt ev ~/dev/jmt/js/_v16/lib/multi.js
+
+# Make a run
+time find /tmp/logs/data/ -type f | sort | egrep '2013/11/01/00' -A 5000 | while read f; do echo $f | grep '00$'; echo "ingest(\"$f\", async())" | socat -t9999 -T9999 - tcp:localhost:59341; done; sleep 3; echo "fixing up and cleaning the data" ; time cat ~/dev/jmt/js/_v16/lib/apacheLog.js | socat -t9999 -T9999 - tcp:localhost:9999 > /dev/null
+
+

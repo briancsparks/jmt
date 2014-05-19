@@ -50,6 +50,7 @@
    *  3. Use a dictionary to have one string that is referenced by many objects.
    *  4. Run the garbage collector at the end.
    */
+  var numLogged = 0;
   processRaw = function(force) {
     var item;
 
@@ -59,14 +60,22 @@
       while (raw.length > 0) {
         item = [];
         _.each(raw.shift().split(/ |\t/), function(field_, i) {
-          var field = field_;
+          var field = field_, parts;
           if (/^[0-9]+$/.exec(field)) {
             item[i] = parseInt(field, 10);
           } else if (/^[0-9]+(\.[0-9]*)?$/.exec(field)) {
             item[i] = parseFloat(field);
           } else if (/^([0-9]+)?\.[0-9]+$/.exec(field)) {
             item[i] = parseFloat(field);
-          } else {
+          } else if (/^.?20[0-9][0-9][\/0-9]+$/.exec(field)) {
+            // Looks like a date string ("20xx/...")
+            parts = field.split('/');
+            if (parts.length === 6 ) {
+              item[i] = (new Date(parts[0], parts[1]-1, parts[2], parts[3], parts[4], parts[5])).getTime();
+            }
+          }
+
+          if (!item[i]) {
             if (cacheRawField(i, field)) {
               item[i] = dicts[i][field] = (dicts[i][field] || field);
             } else {
@@ -74,6 +83,9 @@
             }
           }
         });
+
+        // Add the meta field
+        item._ = {tag:{}};
 
         addToD(item);
       }
@@ -158,6 +170,42 @@
     }
   };
 
+  tag = function(record /*, tags*/) {
+    _.each(_.rest(arguments), function(tag) {
+      record._.tag[tag] = true;
+    });
+  };
+
+  untag = function(record /*, tags*/) {
+    _.each(_.rest(arguments), function(tag) {
+      record._.tag[tag] = false;
+    });
+  };
+
+  enumTagged = function(tags_, fn) {
+    var tags = tags_;
+    if (typeof tags === 'string') { tags = [tags]; }
+
+    var i;
+    var tagsLength = tags.length;
+
+    eachRecord(function(record) {
+      // If the record is missing any tag, it is not matched
+      for (i = 0; i < tagsLength; i++) {
+        if (!record._.tag[tags[i]]) { return; }
+      }
+
+      /* otherwise */
+      fn(record);
+    });
+  };
+
+  enumIndex = function(name, fn) {
+    if (index[name]) {
+      _.each(index[name], fn);
+    }
+  };
+
   /**
    *  Like _.filter, when the fn returns truthy, add to collection.
    */
@@ -166,7 +214,7 @@
 
     eachRecord(function(record, j, column, i) {
       if (fn.apply(this, arguments)) {
-        addToIndex(name, [i, j]);
+        addToIndex(name, record);
       }
     });
   };
@@ -177,20 +225,20 @@
   addToIndex = function(name /*, locs*/) {
     var locs = _.rest(arguments);
 
-    if (locs.length === 1 && _.isArray(locs[0])) {
-      locs = locs[0];
-    }
+    //if (locs.length === 1 && _.isArray(locs[0])) {
+    //  locs = locs[0];
+    //}
 
     index[name] = index[name] || [];
     _.each(locs, function(loc) {
-      addToIndex(name, loc);
+      addOneToIndex(name, loc);
     });
   };
 
   /**
    *  Add one item to an index
    */
-  addToIndex = function(name, loc) {
+  addOneToIndex = function(name, loc) {
     index[name].push(loc);
   };
 
