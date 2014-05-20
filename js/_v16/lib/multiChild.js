@@ -67,12 +67,12 @@
             item[i] = parseFloat(field);
           } else if (/^([0-9]+)?\.[0-9]+$/.exec(field)) {
             item[i] = parseFloat(field);
-          } else if (/^.?20[0-9][0-9][\/0-9]+$/.exec(field)) {
-            // Looks like a date string ("20xx/...")
-            parts = field.split('/');
-            if (parts.length === 6 ) {
-              item[i] = (new Date(parts[0], parts[1]-1, parts[2], parts[3], parts[4], parts[5])).getTime();
-            }
+          //} else if (/^.?20[0-9][0-9][\/0-9]+$/.exec(field)) {
+          //  // Looks like a date string ("20xx/...")
+          //  parts = field.split('/');
+          //  if (parts.length === 6 ) {
+          //    item[i] = (new Date(parts[0], parts[1]-1, parts[2], parts[3], parts[4], parts[5])).getTime();
+          //  }
           }
 
           if (!item[i]) {
