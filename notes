@@ -1,6 +1,17 @@
 
 On startup of a machine:
 
+Read JSON files into v16:
+
+cls; killall node; node --expose-gc ~/dev/jmt/js/v16 --no_catch
+jmt ev ~/dev/jmt/js/_v16/lib/multi.js
+time echo 'read("/home/scotty/v16logdata", async())' | socat -t9999 -T9999 - tcp:localhost:59341
+echo 'global.gc()' | socat -t9999 -T9999 - tcp:localhost:9999
+
+
+
+Manually push log files into v16:
+
 # Copy to tmp
 mkdir -p /tmp/logs/raw /tmp/logs/data && cd /tmp/logs/raw && rsync -rv ~/logs3/data/* ./ && find -type f | grep gz$ | xargs gunzip
 find -type d | while read d; do mkdir -p ../data/$d; done;

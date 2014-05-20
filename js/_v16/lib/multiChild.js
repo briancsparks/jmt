@@ -94,6 +94,42 @@
     }
   };
 
+  save = function(filename, callback) {
+    var contents = [];
+
+    //contents.push('[');
+    eachRecord(function(record, j, column, i) {
+      contents.push(JSON.stringify({i:i, j:j, rec:record}));
+    });
+    //contents.push(']');
+
+    return fs.writeFile(filename, '[' + contents.join(',\n') + '\n]', function(err) {
+      if (global.gc) { global.gc(); }
+
+      return callback(err, {count: contents.length});
+    });
+  };
+
+  read = function(filename, callback) {
+    return fs.readFile(filename, 'utf8', function(err, contents) {
+      if (err) { return callback.apply(this, arguments); }
+
+      /* otherwise */
+      d = [[]];
+      dTableNum = 0;
+      index = {};
+
+      var count = 0;
+      _.each(JSON.parse(contents), function(item) {
+        addToD(item.rec);
+        count++;
+      });
+
+      if (global.gc) { global.gc(); }
+      return callback(null, {count: count});
+    });
+  };
+
   /**
    *  Should the field use the dictionary technique?
    */
@@ -105,7 +141,7 @@
   /**
    *  Add an item to d.
    */
-  var dTableNum  = 0;
+  var dTableNum = 0;
   var addToD = function(x) {
     if (d[dTableNum].length >= tooManyData) {
       d.push([]);

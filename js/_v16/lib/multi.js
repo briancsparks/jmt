@@ -207,6 +207,42 @@
     });
   };
 
+  save = function(dirname, callback) {
+    return exec('mkdir -p ' + dirname, function(err) {
+      var childFn = function() {
+        return save(path.join(dirname, '' + (ARGV.port - 10000) + '.json'), async());
+      };
+
+      var script = "(function() {" + 
+                      "var dirname = '" + dirname + "';" +
+                      "return (" + 
+                        childFn.toString() + 
+                     "())" +
+                   "}())";
+
+      return sendScriptToAllJSON(script, function(err, result) {
+        return callback.apply(this, arguments);
+      });
+    });
+  };
+
+  read = function(dirname, callback) {
+    var childFn = function() {
+      return read(path.join(dirname, '' + (ARGV.port - 10000) + '.json'), async());
+    };
+
+    var script = "(function() {" + 
+                    "var dirname = '" + dirname + "';" +
+                    "return (" + 
+                      childFn.toString() + 
+                   "())" +
+                 "}())";
+
+    return sendScriptToAllJSON(script, function(err, result) {
+      return callback.apply(this, arguments);
+    });
+  };
+
   var listenForMultiScripts = function() {
     var port = 9999;
 

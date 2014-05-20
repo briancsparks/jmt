@@ -11,17 +11,18 @@
 
           var histo = {};
 
-          var url, ip, time, paths, key;
+          var url, ip, time, paths, key, httpRespCode;
           eachRecord(function(record) {
-            time  = record[0]
-            ip    = record[2];
-            url   = record[6];
-            paths = url.paths;
+            time         = record[0]
+            ip           = record[2];
+            url          = record[6];
+            httpRespCode = record[8];
+            paths        = url.paths;
 
-            //if (paths && paths.length > 0 && paths[0].toLowerCase() === 'projects') {
+            if (httpRespCode <= 399 && paths && paths.length > 0 && paths[0].toLowerCase() === 'projects') {
               key = time + ':' + ip + '~' + url.pathname;
               histo[key] = (histo[key] || 0) + 1;
-            //}
+            }
 
             //if (paths && paths.length > 2 && paths[0].toLowerCase() === 'projects') {
             //  if (paths[2] === 'print_options') {
