@@ -327,7 +327,20 @@ else
     cd
     if ! [[ -d zz_packages/node ]]
     then
-      cd zz_packages && git clone git@github.com:joyent/node.git && cd node && git checkout tags/v0.10.19 && ./configure --prefix=${HOME}/local && make -j`grep -c ^processor /proc/cpuinfo` && make install
+      # Get Node.js source, into the zz_packages dir, untar, configure, make, install
+      cd ~/zz_packages \
+        && git clone git@github.com:joyent/node.git \
+        && cd node \
+        && git checkout tags/v0.10.28 \
+        && ./configure --prefix=${HOME}/local \
+        && make -j`grep -c ^processor /proc/cpuinfo` \
+        && make install
+
+      cd
+      npm install -g jshint
+
+      cd && cd dev \
+        && npm install underscore glob node-curl
     fi
 
     # ---------- Redis-server ----------
