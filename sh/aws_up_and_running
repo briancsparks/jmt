@@ -2,7 +2,6 @@
 
 #tmp_dir="/tmp/jmt/aws/$(basename $0)/$$"
 tmp_dir="/tmp/jmt/aws/$(basename $0)"
-echo $tmp_dir
 mkdir -p "$tmp_dir"
 
 instance_type="m3.xlarge"
@@ -20,6 +19,7 @@ for arg in "$@"; do case $arg in
   --sec-group=*)      security_groups="${arg#*=}";    shift;;
   --region=*)         user_region="${arg#*=}";        shift;;
   --zone=*)           user_zone="${arg#*=}";          shift;;
+  --ami=*)            user_ami="${arg#*=}";           shift;;
 
   --) shift; break;;
   *)                    echo "$arg"; shift;;
@@ -47,18 +47,22 @@ fi
 zone="${region}${user_zone}"
 echo "$instance_type $root_disk"
 
-if echo "$instance_type" | grep '^r' 2>&1 > /dev/null; then
-  if [ "$root_disk" == "ebs" ]; then
-    echo "$instance_type must not use EBS"
-    exit 2
-  fi
-  root_disk="instance"
-  ami="$aws_ami_1204_hvm"
+if [ -n "$user_ami" ]; then
+  ami="$user_ami"
 else
-  if [ "$root_disk" == "instance" ]; then
-    ami="$aws_ami_1204_instance_store"
+  if echo "$instance_type" | grep '^r' 2>&1 > /dev/null; then
+    if [ "$root_disk" == "ebs" ]; then
+      echo "$instance_type must not use EBS"
+      exit 2
+    fi
+    root_disk="instance"
+    ami="$aws_ami_1204_hvm"
   else
-    ami="$aws_ami_1204_ebs"
+    if [ "$root_disk" == "instance" ]; then
+      ami="$aws_ami_1204_instance_store"
+    else
+      ami="$aws_ami_1204_ebs"
+    fi
   fi
 fi
 

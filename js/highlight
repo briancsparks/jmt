@@ -1,0 +1,73 @@
+#!/usr/bin/env node
+/* vim: filetype=javascript :
+*/
+
+var sg              = require('./utils/sg');
+var _               = require('underscore');
+var ARGV            = sg.ARGV();
+
+var spec      = {};
+var remainder = '';
+
+var main = function() {
+
+  _.each(ARGV.args, function(arg) {
+    var segments = sg.capturesSync(/^([^:]+):\/([^/]+)\/$/, arg), colorName;
+    if (segments) {
+      colorName = segments[1].toUpperCase();
+      if (color[colorName + 'BOLD']) {
+        colorName += 'BOLD';
+      }
+
+      spec[colorName] = new RegExp(segments[2], 'i');
+    }
+    console.log(spec);
+  });
+
+  process.stdin.setEncoding('utf8');
+  process.stdin.on('data', function(chunk) {
+    var lines = (remainder + chunk).split('\n');
+    remainder = lines.pop();
+    _.each(lines, handleLine);
+  });
+};
+
+var handleLine = function(line) {
+  var found = false;
+  _.each(spec, function(re, name) {
+    if (found) { return; }
+
+    var m = re.exec(line);
+    if (m) {
+      process.stdout.write(line.substr(0, m.index));
+      process.stdout.write(color[name]);
+      process.stdout.write(line.substr(m.index, m[0].length));
+      process.stdout.write(color.NORMAL);
+      process.stdout.write(line.substr(m.index + m[0].length));
+      process.stdout.write('\n');
+      found = true;
+    }
+  });
+
+  if (!found) {
+    process.stdout.write(line + '\n');
+  }
+};
+
+var color = {};
+var NORMAL      = color.NORMAL         = "\033[0m";
+var BOLD        = color.BOLD           = "\033[1m";
+var RED         = color.RED            = "\033[31m";
+var REDBOLD     = color.REDBOLD        = "\033[31;1m";
+var GREEN       = color.GREEN          = "\033[32m";
+var GREENBOLD   = color.GREENBOLD      = "\033[32;1m";
+var YELLOW      = color.YELLOW         = "\033[33m";
+var BLUE        = color.BLUE           = "\033[34m";
+var BLUEBOLD    = color.BLUEBOLD       = "\033[35;1m";
+var WHITE       = color.WHITE          = "\033[37m";
+var WHITEBOLD   = color.WHITEBOLD      = "\033[37;1m";
+var BLACK       = color.BLACK          = "\033[30m";
+var BLACKBOLD   = color.BLACKBOLD      = "\033[30;1m";
+
+main();
+

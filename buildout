@@ -54,8 +54,6 @@ then
 fi
 
 
-extra_users="sparksb casper"
-
 if [[ -n "$remote" ]]
 then
   echo "Running local"
@@ -114,15 +112,6 @@ else
     sudo usermod -G staff -a ${user}
     sudo cp -r ~/.ssh ../${user}
     sudo chown -R ${user}:${user} ../${user}
-
-    ## make the extra users
-    #for u in $extra_users
-    #do
-    #  sudo useradd -m -s /bin/bash -G admin $u
-    #  sudo usermod -G staff -a $u
-    #  sudo cp -r ~/.ssh ../$u
-    #  sudo chown -R $u:$u ../$u
-    #done
 
     echo "---------------------------------------------------------------------------"
     echo "You MUST give scotty nopasswd sudo now... Invoke sudo visudo, and correct %admin ALL=(ALL) NOPASSWD:ALL"
@@ -282,8 +271,8 @@ else
     then
 
       # Get Ruby 1.9.3 source, into the zz_packages dir, untar, configure, make, install
-      mkdir -p zz_packages && cd zz_packages && curl "http://cache.ruby-lang.org/pub/ruby/1.9/ruby-1.9.3-p194.tar.gz" \
-        | tar -xvz && ln -s ruby-1.9.3-p194 ruby && cd ruby && ./configure && make -j`grep -c ^processor /proc/cpuinfo` && sudo make install; cd
+      mkdir -p zz_packages && cd zz_packages && curl "http://cache.ruby-lang.org/pub/ruby/1.9/ruby-1.9.3-p547.tar.gz" \
+        | tar -xvz && ln -s ruby-1.9.3-p547 ruby && cd ruby && ./configure && make -j`grep -c ^processor /proc/cpuinfo` && sudo make install; cd
 
       # Remove ("purge") the system vi / vim
       sudo apt-get purge -y vim vim-runtime gvim vim-tiny vim-common vim-gui-common
@@ -417,6 +406,47 @@ else
                     --enable-network-build --enable-dbus-build --enable-scan-build --enable-fax-build
 
         make -j`grep -c ^processor /proc/cpuinfo` && sudo make install
+      fi
+    fi
+
+    # ---------- foomatic ----------
+    if [[ $forced == rawfoomatic ]]; then
+
+      cd
+      if ! [[ -d zz_packages/foomatic-filters ]]
+      then
+
+        sudo apt-get install -y libdbus-1-dev ghostscript
+
+        cd zz_packages
+
+        # Install foomatic binaries (filters)
+        curl -L 'http://www.openprinting.org/download/foomatic/foomatic-filters-4.0-current.tar.gz' | tar xvz
+        ln -s $(find -maxdepth 1 -type d | grep foomatic-filters | head -1) foomatic-filters
+
+        cd foomatic-filters
+        ./configure && make -j`grep -c ^processor /proc/cpuinfo` && sudo make install-main
+        cd ..
+
+        # Install foomatic db
+        curl -L 'http://www.openprinting.org/download/foomatic/foomatic-db-4.0-current.tar.gz' | tar xvz
+        ln -s $(find -maxdepth 1 -type d | grep foomatic-db- | head -1) foomatic-db
+        
+        # Install foomatic db engine
+        curl -L 'http://www.openprinting.org/download/foomatic/foomatic-db-engine-4.0-current.tar.gz' | tar xvz
+        ln -s $(find -maxdepth 1 -type d | grep foomatic-db-engine | head -1) foomatic-db-engine
+
+        cd foomatic-db-engine
+        ./configure && make -j`grep -c ^processor /proc/cpuinfo` && sudo make install
+        cd ..
+
+        # Need LSB
+        sudo apt-get install -y lsb
+
+        # Install test Epson printer
+        curl -L -O 'http://download.ebz.epson.net/dsc/op/stable/debian/dists/lsb3.2/main/binary-amd64/epson-inkjet-printer-201208w_1.0.0-1lsb3.2_amd64.deb'
+        sudo dpkg -i epson-inkjet-printer-201208w_1.0.0-1lsb3.2_amd64.deb
+
       fi
     fi
 
