@@ -165,80 +165,6 @@ else
       mkdir -p ~/local/bin ~/local/lib && curl -L 'http://beyondgrep.com/ack-2.10-single-file' > ~/local/bin/ack && chmod 0755 ~/local/bin/ack
     fi
 
-    ## Install gcc 4.8 -- not worth the effort, just use default
-    #cd
-    #if ! gcc --version | grep '4.8' 2>&1 > /dev/null
-    #then
-    #  if ! [[ -d zz_packages/compiler ]]
-    #  then
-    #    sudo apt-get update && sudo apt-get upgrade -y
-    #    sudo apt-get install -y zlib1g zlib1g-dev openssl tree curl htop nmap gawk libcurl4-openssl-dev libssl-dev \
-    #                            flex bison libc6-dev-i386 g++ make
-
-    #    cd; mkdir -p zz_packages/compiler/build
-    #    cd zz_packages/compiler
-
-    #    curl http://ftp.gnu.org/gnu/gcc/gcc-4.8.2/gcc-4.8.2.tar.bz2 | tar xvj
-    #    ln -s gcc-4.8.2 gcc
-
-    #    cd gcc
-    #    ./contrib/download_prerequisites
-    #    cd ..
-
-    #    cd build
-
-    #    ../gcc/configure --disable-checking --enable-languages=c,c++ --enable-shared --enable-threads=posix --program-suffix=4.8 \
-    #                 --without-included-gettext --with-system-zlib --with-tune=generic
-
-    #    make -j`grep -c ^processor /proc/cpuinfo` && sudo make install
-
-    #    #sudo ln -sf /usr/local/bin/g++4.8  /usr/bin/g++
-    #    #sudo ln -sf /usr/local/bin/gcc4.8  /usr/bin/gcc
-    #    #sudo ln -sf /usr/local/bin/x86_64-unknown-linux-gnu-g++4.8  /usr/bin/x86_64-linux-gnu-g++
-    #    #sudo ln -sf /usr/local/bin/x86_64-unknown-linux-gnu-gcc4.8  /usr/bin/x86_64-linux-gnu-gcc
-
-    #    # This is the message at the end of compiling/install gcc 4.8
-    #    #
-    #    #Libraries have been installed in:
-    #    #/usr/local/lib/../lib64
-    #    #
-    #    #If you ever happen to want to link against installed libraries
-    #    #in a given directory, LIBDIR, you must either use libtool, and
-    #    #specify the full pathname of the library, or use the `-LLIBDIR'
-    #    #flag during linking and do at least one of the following:
-    #    #- add LIBDIR to the `LD_LIBRARY_PATH' environment variable
-    #    #during execution
-    #    #- add LIBDIR to the `LD_RUN_PATH' environment variable
-    #    #during linking
-    #    #- use the `-Wl,-rpath -Wl,LIBDIR' linker flag
-    #    #- have your system administrator add LIBDIR to `/etc/ld.so.conf'
-    #    #
-    #    #See any operating system documentation about shared libraries for
-    #    #more information, such as the ld(1) and ld.so(8) manual pages.
-
-
-    #  fi
-    #fi
-
-    ## Install basics - This is for when using gcc 4.8
-    #cd
-    #if ! dpkg -s socat 2> /dev/null > /dev/null
-    #then
-
-    #  # Make certain dirs available to scotty
-    #  sudo mkdir -p /var/log
-    #  sudo chown root:staff /var     && sudo chmod g+w /var
-    #  sudo chown root:staff /var/log && sudo chmod g+w /var/log
-
-    #  sudo apt-get update && sudo apt-get upgrade -y
-    #  sudo apt-get install -y ncurses-dev libncurses5-dev libgdbm-dev libyaml-dev libffi-dev libreadline6 libreadline6-dev \
-    #                          autoconf libc6-dev automake libtool subversion pkg-config libperl-dev \
-    #                          libpcre3 libpcre3-dev libgd-tools libsqlite3-dev sqlite3 libxml2-dev libxslt-dev libmysqlclient-dev cscope exuberant-ctags \
-    #                          mercurial git-core socat ntp
-    #  sudo shutdown -r now 
-    #  exit 0
-    #fi
-
     # ---------- Install basics ----------
     cd
     if ! dpkg -s socat 2> /dev/null > /dev/null
@@ -360,6 +286,21 @@ else
       fi
     fi
 
+    # ---------- MongoDB ----------
+    if [[ $forced == MongoDB ]]
+    then
+
+      if ! dpkg -s mongodb-org 2> /dev/null > /dev/null
+      then
+
+        sudo apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv 7F0CEB10
+        echo 'deb http://downloads-distro.mongodb.org/repo/ubuntu-upstart dist 10gen' | sudo tee /etc/apt/sources.list.d/mongodb.list
+        sudo apt-get update
+        sudo apt-get install -y mongodb-org
+
+      fi
+    fi
+    
     # ---------- ImageMagick ----------
     if [[ $forced == ImageMagick ]]
     then
