@@ -279,7 +279,7 @@ else
         # Passenger
         sudo gem install bundler --no-ri --no-rdoc \
           && sudo gem install passenger --no-ri --no-rdoc \
-          && sudo gem install rails -v 3.2.11 --no-ri --no-rdoc \
+          && sudo gem install rails -v 4.1.0 --no-ri --no-rdoc \
           && sudo passenger-install-nginx-module --auto --prefix=/etc/nginx --nginx-source-dir=${HOME}/zz_packages/nginx --extra-configure-flags=none; cd
 
         sudo ln -s /etc/nginx/sbin/nginx /usr/sbin/nginx

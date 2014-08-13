@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+
+echo "This is a template file, not executable"
+exit 9
+
+# ---------- Die ----------
+#
+# Use die like:
+#
+#     [[ $# > 0 ]] || die "Gimme an arg" 99
+#
+
+die() {
+  echo $1
+  xcode="99"
+  [[ $# > 1 ]] && xcode="$2"
+  exit $xcode
+}
+
+# ---------- Dependencies ----------
+
+# replace "example" with the tool you need
+#
+# Easy -- die if the dependency is absent
+which example > /dev/null || die "example required"
+
+# a function to install dependencies
+#
+# Replace the installer command (the npm install line)
+#    sudo apt-get install -y ${UTIL_NAME}
+check_and_install()
+{
+  UTIL_NAME="$1"
+  if [ "$#" == "2" ]; then UTIL_NAME="$2"; fi
+
+  if ! which "$1" > /dev/null; then 
+    npm install -g ${UTIL_NAME}
+  fi
+}
+
+check_for "grunt" "grunt-cli"
+check_for "bower"
+
+# Check if a package is installed
+if ! dpkg -s example 2> /dev/null > /dev/null; then
+  sudo apt-get install example
+fi
+
+
+# ---------- Pre ----------
+
+# If a program exits with an error, halt the script
+set -o errexit
+
+# If a var doesn't exist, and is referenced, that is an error to halt for
+#
+# Note, however, that things like 'if [[ $1 == "" ]]' will fail, so this is less
+# useful than it could be
+set -o nounset
+
+# ---------- Idioms ----------
+
+# Determining if a var is set
+#
+# "zero" -- a var is not set
+[ -z "$foo" ] && export foo="barbaz"
+
+# "not zero" -- a var will expand to something
+if [[ -n "$user" ]]; then
+  cmd="${cmd} --user ${user}"
+fi
+
+# ---------- Paramater parsing ----------
+
+# Note:
+# * The below handling for '*' should be changed.
+#
+# Limitations:
+# 1. The flags must come before other args
+# 1. Must use '--' to signal 'no more flags'
+
+foo="default foo value"
+bar="5"
+fubar="aaaaaa"
+
+for arg in "$@"; do case $arg in
+  --foo=*)     foo="${arg#*=}";     shift;;
+  --bar=*)     bar="${arg#*=}";     shift;;
+  --fu-bar=*)  fubar="${arg#*=}";   shift;;
+  --baz=*)     baz="${arg#*=}";     shift;;
+
+  --)                               shift; break;;
+  *)           echo "$arg";         shift;;
+esac; done
+
+[[ -z "$baz" ]] || die "Must provide --baz=xyz"
+
+
+
