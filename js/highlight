@@ -6,23 +6,20 @@ var sg              = require('./utils/sg');
 var _               = require('underscore');
 var ARGV            = sg.ARGV();
 
-var spec      = {};
+var spec      = [];
 var remainder = '';
 
 var main = function() {
 
+//console.log(ARGV.args);
   _.each(ARGV.args, function(arg) {
     var segments = sg.capturesSync(/^([^:]+):\/([^/]+)\/$/, arg), colorName;
+console.log(segments);
     if (segments) {
-      colorName = segments[1].toUpperCase();
-      if (color[colorName + 'BOLD']) {
-        colorName += 'BOLD';
-      }
-
-      spec[colorName] = new RegExp(segments[2], 'i');
+      spec.push({name:segments[1].toUpperCase(), re: new RegExp(segments[2], 'ig')});
     }
-    console.log(spec);
   });
+  console.log(spec);
 
   process.stdin.setEncoding('utf8');
   process.stdin.on('data', function(chunk) {
@@ -32,26 +29,60 @@ var main = function() {
   });
 };
 
-var handleLine = function(line) {
-  var found = false;
-  _.each(spec, function(re, name) {
-    if (found) { return; }
+var handleLine = function(line_) {
+  var line        = line_;
+  var handled     = false;
+  var lineColored = false;
+  var lineColor   = null;
 
-    var m = re.exec(line);
-    if (m) {
-      process.stdout.write(line.substr(0, m.index));
-      process.stdout.write(color[name]);
-      process.stdout.write(line.substr(m.index, m[0].length));
-      process.stdout.write(color.NORMAL);
-      process.stdout.write(line.substr(m.index + m[0].length));
-      process.stdout.write('\n');
-      found = true;
+
+  _.each(spec, function(item) {
+    var newLine = '';
+    var replacementSpec;
+    var foundLineColor = false;
+    var m;
+    var matchFrom = 0;
+    var remainder = '';
+
+    var preColor        = color[item.name];
+    if (color[item.name+'BOLD']) {
+      preColor = color[item.name+'BOLD'];
+    }
+
+    if ((m = item.re.exec(line)) !== null) {
+      handled = true;
+
+      if (!lineColor) {
+        lineColor = color[item.name];
+        foundLineColor = true;
+      }
+
+      do {
+
+        newLine += m.input.substr(matchFrom, m.index);
+        newLine += preColor;
+        newLine += m[0];
+        newLine += color.NORMAL + lineColor;
+
+        matchFrom = item.re.lastIndex;
+        remainder = m.input.substr(matchFrom);
+
+      } while ((m = item.re.exec(line)) !== null);
+
+      newLine += remainder;
+
+      if (foundLineColor) {
+        newLine = lineColor + newLine + color.NORMAL;
+      }
+
+      line = newLine;
+
     }
   });
 
-  if (!found) {
+  //if (line !== line_) {
     process.stdout.write(line + '\n');
-  }
+  //}
 };
 
 var color = {};
@@ -68,6 +99,11 @@ var WHITE       = color.WHITE          = "\033[37m";
 var WHITEBOLD   = color.WHITEBOLD      = "\033[37;1m";
 var BLACK       = color.BLACK          = "\033[30m";
 var BLACKBOLD   = color.BLACKBOLD      = "\033[30;1m";
+
+//var RED         = color.RED            = "RED";
+//var REDBOLD     = color.REDBOLD        = "REDBOLD";
+//var BLUE        = color.BLUE           = "BLUE";
+//var BLUEBOLD    = color.BLUEBOLD       = "BLUEBOLD";
 
 main();
 

@@ -467,41 +467,50 @@ var TheARGV = function(params_) {
     var m, m2;
 
     curr = process.argv[i];
+    //console.log("ARG Raw, next: ", curr, next);
 
     // --foo=bar, --foo=
-    if ((m = /--([a-zA-Z_0-9\-]+)=([^ ]+)/.exec(curr)) && m.length === 3) {
+    if ((m = /^--([a-zA-Z_0-9\-]+)=([^ ]+)/.exec(curr)) && m.length === 3) {
+      //console.log("ARG Recognized as --foo=bar " + curr);
       self.setFlag([m[1]], m[2]);
     }
     // --foo-
-    else if ((m = /--([^ ]+)-/.exec(curr))) {
+    else if ((m = /^--([^ ]+)-/.exec(curr))) {
+      //console.log("ARG Recognized as '--foo-' " + curr);
       self.setFlag([m[1]], false);
     }
     // --foo= bar
-    else if ((m = /--([^ ]+)=/.exec(curr)) && next && (m2 = /^([^\-][^ ]*)/.exec(next))) {
+    else if ((m = /^--([^ ]+)=/.exec(curr)) && next && (m2 = /^([^\-][^ ]*)/.exec(next))) {
+      //console.log("ARG Recognized as '--foo bar' " + curr);
       self.setFlag([m[1]], m2[1]);
       i++;
     }
     // --foo
-    else if ((m = /--([^ ]+)/.exec(curr))) {
+    else if ((m = /^--([^ ]+)/.exec(curr))) {
+      //console.log("ARG Recognized as '--foo' " + curr);
       self.setFlag([m[1]], true);
     }
     // -f-
-    else if ((m = /-(.)-/.exec(curr))) {
+    else if ((m = /^-(.)-/.exec(curr))) {
+      //console.log("ARG Recognized as '-f-' " + curr);
       self.setFlag([m[1]], true);
     }
     // -f bar
-    else if ((m = /-(.)/.exec(curr)) && next && (m2 = /^([^\-][^ ]*)/.exec(next))) {
+    else if ((m = /^-(.)/.exec(curr)) && next && (m2 = /^([^\-][^ ]*)/.exec(next))) {
+      //console.log("ARG Recognized as -f bar " + curr);
       self.setFlag([m[1]], m2[1]);
       i++;
     }
     // -f
-    else if ((m = /-(.)/.exec(curr))) {
+    else if ((m = /^-(.)/.exec(curr))) {
+      //console.log("ARG Recognized as '-f' " + curr);
       self.setFlag([m[1]], true);
     }
     else if (curr === '--') {
       break;
     }
     else {
+      //console.log("ARG Argument: " + curr);
       self.args.push(curr);
     }
   }

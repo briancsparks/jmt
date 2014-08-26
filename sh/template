@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+
+die() {
+  echo $1
+  xcode="99"
+  [[ $# > 1 ]] && xcode="$2"
+  exit $xcode
+}
+
+[[ $# > 0 ]] || die "Gimme an arg -- what type of template?" 99
+
+type="$1"
+shift
+
+cat "$jmt_dir/templates/$type" | sed -n '1p;/^##- {/,/^##- }/p' | egrep -v '^##'
+#cat "$jmt_dir/templates/$type" | sed '/^abcd/,/^efgh/p' | egrep -v '^##'
+
+

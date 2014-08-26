@@ -254,7 +254,7 @@ else
       cd
       npm install -g jshint
 
-      cd && cd dev \
+      cd && mkdir -p dev && cd dev \
         && npm install underscore glob node-curl
     fi
 
@@ -337,8 +337,8 @@ else
                                 a2ps libtiff4-dev libfreetype6-dev python python-reportlab libsane libsane-dev sane-utils xsane
 
         cd zz_packages
-        curl -L http://sourceforge.net/projects/hplip/files/hplip/3.12.4/hplip-3.12.4.tar.gz/download | tar xvz 
-        ln -s hplip-3.12.4 hplip
+        curl -L http://sourceforge.net/projects/hplip/files/hplip/3.14.6/hplip-3.14.6.tar.gz/download | tar xvz 
+        ln -s hplip-3.14.6 hplip
         cd hplip
         pushd ppd/hpcups && gunzip *; popd
         ./configure --with-hpppddir=/usr/share/ppd/HP --libdir=/usr/lib64 --prefix=/usr --enable-udev-acl-rules --enable-qt4 \
