@@ -4,22 +4,30 @@
 
 var sg              = require('./utils/sg');
 var _               = require('underscore');
+var util            = require('util');
 var ARGV            = sg.ARGV();
+
+var clsRe     = null;
 
 var spec      = [];
 var remainder = '';
 
 var main = function() {
 
+  // 'red:/( [0-9]+ E |169\.254)/' 'blue:/(sleeping for |10\.0\.3\.47|PrinterScan::| Wait(ing|ed) for printer scan)/' 'black:/main.js|printfromtheweb.js/'
 //console.log(ARGV.args);
   _.each(ARGV.args, function(arg) {
     var segments = sg.capturesSync(/^([^:]+):\/([^/]+)\/$/, arg), colorName;
-console.log(segments);
     if (segments) {
       spec.push({name:segments[1].toUpperCase(), re: new RegExp(segments[2], 'ig')});
     }
   });
   console.log(spec);
+
+  console.log(ARGV.cls);
+  if (ARGV.cls) {
+    clsRe = new RegExp(ARGV.cls, 'ig');
+  }
 
   process.stdin.setEncoding('utf8');
   process.stdin.on('data', function(chunk) {
@@ -35,6 +43,11 @@ var handleLine = function(line_) {
   var lineColored = false;
   var lineColor   = null;
 
+  if (clsRe) {
+    if (clsRe.exec(line)) {
+      process.stdout.write('\x1bc');
+    }
+  }
 
   _.each(spec, function(item) {
     var newLine = '';
