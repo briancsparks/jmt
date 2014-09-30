@@ -332,7 +332,7 @@ else
         echo DEVICE_URI=x >> ~/.profile
 
         sudo apt-get install -y libcups2 cups libcups2-dev cups-bsd cups-client libcupsimage2-dev libdbus-1-dev ghostscript \
-                                libsnmp-dev libtool libusb-dev python-imaging policykit-1 policykit-1-gnome \
+                                libsnmp-dev libtool libusb-1.0-0-dev python-imaging policykit-1 policykit-1-gnome \
                                 python-qt4 python-qt4-dbus python-dbus python-gobject python-dev python-notify \
                                 a2ps libtiff4-dev libfreetype6-dev python python-reportlab libsane libsane-dev sane-utils xsane
 
@@ -347,6 +347,37 @@ else
                     --enable-network-build --enable-dbus-build --enable-scan-build --enable-fax-build
 
         make -j`grep -c ^processor /proc/cpuinfo` && sudo make install
+      fi
+    fi
+
+    # ---------- epson ----------
+    if [[ $forced == epson ]]; then
+      cd
+
+      if ! [[ -d zz_packages/hplip ]]; then
+        echo "Error: Must build hplip first"
+        exit 1
+
+      elif ! [[ -d zz_packages/epson ]]; then
+        sudo apt-get install -y lsb
+
+        mkdir -p ~/zz_packages/epson && cd $_
+
+        # Fetch the package and install it
+        curl -L -O 'https://download2.ebz.epson.net/dsc/f/03/00/03/12/29/d2e49f1e61cde2f687d0fa8160e40e69cb0cd345/epson-inkjet-printer-escpr_1.4.2-1lsb3.2_amd64.deb'
+        sudo dpkg -i epson-inkjet-printer-escpr_1.4.2-1lsb3.2_amd64.deb
+
+        # Fixup the PPDs
+        cd /opt/epson-inkjet-printer-escpr/ppds/Epson
+        sudo gunzip *
+
+        # modify cups filter to use rastertoescpx instead of original
+        sudo sed -i 's/\/opt\/epson-inkjet-printer-escpr\/cups\/lib\/filter\/epson-escpr-wrapper/rastertoescpx/' ./*
+
+        # copy the installed ppd files to hpcups
+        sudo cp ./* /home/scotty/zz_packages/hplip/ppd/hpcups
+
+        cd
       fi
     fi
 

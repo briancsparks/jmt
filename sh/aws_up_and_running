@@ -20,6 +20,7 @@ for arg in "$@"; do case $arg in
   --region=*)         user_region="${arg#*=}";        shift;;
   --zone=*)           user_zone="${arg#*=}";          shift;;
   --ami=*)            user_ami="${arg#*=}";           shift;;
+  --dry-run)          dry_run="true";                 shift;;
 
   --) shift; break;;
   *)                    echo "$arg"; shift;;
@@ -31,17 +32,17 @@ if [ "$user_region" == "east" ]; then
   key_name="loki-prod-east"
   security_groups="$key_name"
 
-  aws_ami_1204_ebs="ami-5db4a934"
+  aws_ami_1204_ebs="ami-3acc7a52"
   aws_ami_1204_instance_store="ami-2f8f9246"
-  aws_ami_1204_hvm="ami-07809d6e"
+  aws_ami_1204_hvm="ami-34cc7a5c"
 elif [ "$user_region" == "west" ]; then
   region="us-west-2"
   key_name="loki-prod-west2"
   security_groups="$key_name"
 
-  aws_ami_1204_ebs="ami-22e08b12"
+  aws_ami_1204_ebs="ami-07470537"
   aws_ami_1204_instance_store="ami-9eed86ae"
-  aws_ami_1204_hvm="ami-82e289b2"
+  aws_ami_1204_hvm="ami-0f47053f"
 fi
 
 zone="${region}${user_zone}"
@@ -77,6 +78,11 @@ if [ -f /etc/sudoers.d/90-cloudimg-ubuntu ]; then
 fi
 perl -pi -e "s/ubuntu/\$user/g;" /etc/sudoers.d/90-cloud-init-users
 EOF
+
+if [[ $dry_run == true ]]; then
+  echo DRY-RUN: aws ec2 run-instances "--image-id" "$ami" "--count" 1 "--instance-type" "$instance_type" "--key-name" $key_name "--security-groups" "$security_groups" --block-device-mapping '[{"DeviceName":"/dev/sdb", "VirtualName":"ephemeral0"}, {"DeviceName":"/dev/sdc", "VirtualName":"ephemeral1"}, {"DeviceName":"/dev/sdd", "VirtualName":"ephemeral2"}, {"DeviceName":"/dev/sde", "VirtualName":"ephemeral3"}]' --profile "$user_region" --user-data "file://$tmp_dir/user_data_file" --query 'Instances[*].InstanceId'
+  exit 0
+fi
 
 instance_id=$(aws ec2 run-instances "--image-id" "$ami" "--count" 1 "--instance-type" "$instance_type" "--key-name" $key_name "--security-groups" "$security_groups" --block-device-mapping '[{"DeviceName":"/dev/sdb", "VirtualName":"ephemeral0"}, {"DeviceName":"/dev/sdc", "VirtualName":"ephemeral1"}, {"DeviceName":"/dev/sdd", "VirtualName":"ephemeral2"}, {"DeviceName":"/dev/sde", "VirtualName":"ephemeral3"}]' --profile "$user_region" --user-data "file://$tmp_dir/user_data_file" --query 'Instances[*].InstanceId')
 echo $instance_id
