@@ -155,7 +155,9 @@ else
     if ! [[ -d dotfiles ]]
     then
       ssh -o "StrictHostKeyChecking no" git@github.com
-      git clone git@github.com:briancsparks/dotfiles.git && cd dotfiles && ls -a | grep -v git | xargs -L 1 -r -I {} cp {} ../; cd
+      git clone git@github.com:briancsparks/dotfiles.git && cd dotfiles \
+        && ./setup \
+        && ./setupbash
     fi
 
     # ---------- Get ack ----------
@@ -199,6 +201,10 @@ else
       # Get Ruby 1.9.3 source, into the zz_packages dir, untar, configure, make, install
       mkdir -p zz_packages && cd zz_packages && curl "http://cache.ruby-lang.org/pub/ruby/1.9/ruby-1.9.3-p547.tar.gz" \
         | tar -xvz && ln -s ruby-1.9.3-p547 ruby && cd ruby && ./configure && make -j`grep -c ^processor /proc/cpuinfo` && sudo make install; cd
+
+      # Install Pry and awesome print
+      sudo gem install pry
+      sudo gem install awesome_print
 
       # Remove ("purge") the system vi / vim
       sudo apt-get purge -y vim vim-runtime gvim vim-tiny vim-common vim-gui-common
