@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+
+sudo chmod 777 /tmp
+
+[[ -d '/data' ]] || sudo mkdir '/data'
+[[ -d '/data/lost+found' ]] && sudo rmdir '/data/lost+found'
+
+DATA_OWNER=$(stat '/data' | egrep -i -o 'Gid:.*$' | head -1 | sed 's/(Gid|[^a-zA-Z])*//g')
+
+[[ "$DATA_OWNER" == "mongo" ]] || sudo chown -R mongodb:mongodb /data
+
