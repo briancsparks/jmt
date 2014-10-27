@@ -344,7 +344,12 @@ else
 
         cd zz_packages
         curl -L http://sourceforge.net/projects/hplip/files/hplip/3.14.6/hplip-3.14.6.tar.gz/download | tar xvz 
+        # remove ppds from hplip, and copy from git repository.  This gives us more control over the ppds
+        git clone git@github.com:IPGPTP/mario.git mario        
         ln -s hplip-3.14.6 hplip
+        rm hplip/ppd/hpcups/*.ppd.gz
+        sudo cp -r mario/print_server/ppds/hp/* hplip/ppd/hpcups
+        sudo rm -rf mario
         cd hplip
         pushd ppd/hpcups && gunzip *; popd
         ./configure --with-hpppddir=/usr/share/ppd/HP --libdir=/usr/lib64 --prefix=/usr --enable-udev-acl-rules --enable-qt4 \
@@ -370,9 +375,11 @@ else
         mkdir -p ~/zz_packages/epson && cd $_
 
         # Fetch the package and install it
-        curl -L -O 'https://download2.ebz.epson.net/dsc/f/03/00/03/12/29/d2e49f1e61cde2f687d0fa8160e40e69cb0cd345/epson-inkjet-printer-escpr_1.4.2-1lsb3.2_amd64.deb'
-        sudo dpkg -i epson-inkjet-printer-escpr_1.4.2-1lsb3.2_amd64.deb
-
+        # curl -L -O 'https://download2.ebz.epson.net/dsc/f/03/00/03/12/29/d2e49f1e61cde2f687d0fa8160e40e69cb0cd345/epson-inkjet-printer-escpr_1.4.2-1lsb3.2_amd64.deb'
+        # Fetch the package from repository instead from epson website.  This way we have more control over it
+        git clone git@github.com:IPGPTP/mario.git mario
+        sudo dpkg -i mario/print_server/ppds/epson/epson-inkjet-printer-escpr.deb
+        rm -rf mario
         # Fixup the PPDs
         cd /opt/epson-inkjet-printer-escpr/ppds/Epson
         sudo gunzip *
