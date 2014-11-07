@@ -143,11 +143,18 @@ else
       sudo userdel -r ubuntu
     fi
 
+    # ---------- Nothing works without 777 /tmp ----------
+    if ! stat /tmp | egrep -i '^access:.+777'; then
+      sudo chmod 777 /tmp
+      echo "Must log back in"
+      exit 0
+    fi
+
     # ---------- Install rudimentary stuff ----------
     cd
     if ! dpkg -s git-core 2> /dev/null > /dev/null
     then
-      sudo apt-get install -y libreadline6 git-core build-essential
+      sudo apt-get update && sudo apt-get install -y libreadline6 git-core build-essential git
     fi
 
     # ---------- Grab dotfiles ----------
@@ -174,13 +181,22 @@ else
 
       # Make certain dirs available to scotty
       sudo mkdir -p /var/log
-      sudo chown root:staff /var     && sudo chmod g+w /var
-      sudo chown root:staff /var/log && sudo chmod g+w /var/log
+      sudo chown root:admin /var     && sudo chmod g+w /var
+      sudo chown root:admin /var/log && sudo chmod g+w /var/log
 
       sudo apt-get update && sudo apt-get upgrade -y && sudo apt-get install -y openssl tree curl htop nmap mercurial build-essential git-core socat gawk libcurl4-openssl-dev ntp
       sudo apt-get install -y ncurses-dev libncurses5-dev libgdbm-dev libyaml-dev libffi-dev libreadline6 libreadline6-dev \
                               zlib1g zlib1g-dev libssl-dev autoconf libc6-dev automake libtool bison subversion pkg-config libperl-dev \
                               libpcre3 libpcre3-dev libgd-tools libsqlite3-dev sqlite3 libxml2-dev libxslt-dev libmysqlclient-dev cscope exuberant-ctags 
+
+      # Update bootisms
+      sudo perl -pi -e "s/\/mnt/\/tmp/g;" /etc/fstab
+      if [[ -b /dev/xvdc ]]; then
+        echo '/dev/xvdc /data auto  defaults,nobootwait,noatime,comment=cloudconfig 0 2' | sudo tee -a /etc/fstab
+      fi
+
+      sudo chmod 777 /tmp
+
       sudo shutdown -r now 
       exit 0
     fi
@@ -246,16 +262,25 @@ else
 
     # ---------- Compile Node.js ----------
     cd
-    if ! [[ -d zz_packages/node ]]
-    then
+#    if ! [[ -d zz_packages/node ]]
+    if ! [[ -f ${HOME}/local/bin/node ]]; then
+
       # Get Node.js source, into the zz_packages dir, untar, configure, make, install
-      cd ~/zz_packages \
-        && git clone git@github.com:joyent/node.git \
-        && cd node \
-        && git checkout tags/v0.10.28 \
-        && ./configure --prefix=${HOME}/local \
-        && make -j`grep -c ^processor /proc/cpuinfo` \
-        && make install
+      mkdir -p ~/zz_packages && cd $_
+
+      if ! [[ -d node ]]; then
+        git clone git@github.com:joyent/node.git
+        cd node
+      else
+        cd node
+        make clean
+        git remote update 
+      fi
+
+      git checkout tags/v0.10.33
+      ./configure --prefix=${HOME}/local
+      make -j`grep -c ^processor /proc/cpuinfo`
+      make install
 
       cd
       npm install -g jshint
@@ -273,28 +298,9 @@ else
       sudo redis-server /etc/redis.conf
     fi
 
-    # ---------- nginx & Passenger ----------
-    if [[ $forced == nginx ]]
-    then
-
-      cd
-      if ! [[ -d zz_packages/nginx ]]
-      then
-        cd zz_packages && hg clone http://hg.nginx.org/nginx nginx && cd nginx && ln -fs ./auto/configure configure; cd
-
-        # Passenger
-        sudo gem install bundler --no-ri --no-rdoc \
-          && sudo gem install passenger --no-ri --no-rdoc \
-          && sudo gem install rails -v 4.1.0 --no-ri --no-rdoc \
-          && sudo passenger-install-nginx-module --auto --prefix=/etc/nginx --nginx-source-dir=${HOME}/zz_packages/nginx --extra-configure-flags=none; cd
-
-        sudo ln -s /etc/nginx/sbin/nginx /usr/sbin/nginx
-      fi
-    fi
-
     # ---------- MongoDB ----------
-    if [[ $forced == MongoDB ]]
-    then
+    #if [[ $forced == MongoDB ]]
+    #then
 
       if ! dpkg -s mongodb-org 2> /dev/null > /dev/null
       then
@@ -304,11 +310,37 @@ else
         sudo apt-get update
         sudo apt-get install -y mongodb-org
 
+        sudo chown mongodb:mongodb /data
+        sudo perl -pi -e "s/^dbpath=.*/dbpath=\/data/g;" /etc/mongod.conf
+        sudo service mongod restart
       fi
-    fi
+    #fi
     
+    # ---------- nginx & Passenger ----------
+    #if [[ $forced == nginx ]]
+    #then
+
+      cd
+      if ! [[ -d zz_packages/nginx ]]
+      then
+        cd zz_packages && hg clone http://hg.nginx.org/nginx nginx && cd nginx && ln -fs ./auto/configure configure; cd
+
+        # Passenger
+        sudo gem install bundler --no-ri --no-rdoc \
+          && sudo gem install passenger --no-ri --no-rdoc \
+          && sudo gem install rails -v 4.1.0 --no-ri --no-rdoc
+
+        # Dunno why a build would need non-world writable parent dir, but it does
+        sudo chmod o-w /tmp
+        sudo passenger-install-nginx-module --auto --prefix=/etc/nginx --nginx-source-dir=${HOME}/zz_packages/nginx --extra-configure-flags=none; cd
+        sudo chmod 777 /tmp
+
+        sudo ln -s /etc/nginx/sbin/nginx /usr/sbin/nginx
+      fi
+    #fi
+
     # ---------- ImageMagick ----------
-    if [[ $forced == ImageMagick ]]
+    if [[ $forced == ImageMagick || $forced == hplip ]]
     then
 
       cd
@@ -319,7 +351,18 @@ else
 
         echo export PKG_CONFIG_PATH=/usr/lib/pkgconfig >> ~/.profile
         cd zz_packages
-        curl -L http://sourceforge.net/projects/imagemagick/files/old-sources/6.x/6.7/ImageMagick-6.7.9-10.tar.gz/download | tar xvz
+
+        if ! [[ -f ImageMagick-6.7.9-10.tar.gz ]]; then
+          curl -L http://sourceforge.net/projects/imagemagick/files/old-sources/6.x/6.7/ImageMagick-6.7.9-10.tar.gz/download -o ImageMagick-6.7.9-10.tar.gz
+        fi
+
+        if ! [[ -f ImageMagick-6.7.9-10.tar.gz ]]; then
+          echo "CANNOT DOWNLOAD IMAGEMAGICK!!"
+          exit 2
+        fi
+
+        cat ImageMagick-6.7.9-10.tar.gz | tar xvz 
+
         ln -s ImageMagick-6.7.9-10 ImageMagick
         cd ImageMagick
         ./configure --prefix=/usr --sysconfdir=/etc --with-modules --with-perl --enable-64bit && make -j`grep -c ^processor /proc/cpuinfo` && sudo make install
@@ -343,7 +386,18 @@ else
                                 a2ps libtiff4-dev libfreetype6-dev python python-reportlab libsane libsane-dev sane-utils xsane
 
         cd zz_packages
-        curl -L http://sourceforge.net/projects/hplip/files/hplip/3.14.6/hplip-3.14.6.tar.gz/download | tar xvz 
+
+        if ! [[ -f hplip-3.14.6.tar.gz ]]; then
+          curl -L http://sourceforge.net/projects/hplip/files/hplip/3.14.6/hplip-3.14.6.tar.gz/download -o hplip-3.14.6.tar.gz
+        fi
+
+        if ! [[ -f hplip-3.14.6.tar.gz ]]; then
+          echo "CANNOT DOWNLOAD HPLIP!!"
+          exit 2
+        fi
+
+        cat hplip-3.14.6.tar.gz | tar xvz 
+
         # remove ppds from hplip, and copy from git repository.  This gives us more control over the ppds
         git clone git@github.com:IPGPTP/mario.git mario        
         ln -s hplip-3.14.6 hplip
@@ -358,6 +412,7 @@ else
                     --enable-network-build --enable-dbus-build --enable-scan-build --enable-fax-build
 
         make -j`grep -c ^processor /proc/cpuinfo` && sudo make install
+        sudo shutdown -r now 
       fi
     fi
 

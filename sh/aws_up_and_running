@@ -10,7 +10,7 @@ key_name="loki-prod-east"
 security_groups="$key_name"
 user_region="east"
 region="us-east-1"
-user_zone="c"
+user_zone="d"
 
 for arg in "$@"; do case $arg in
   --instance-type=*)  instance_type="${arg#*=}";      shift;;
@@ -84,7 +84,28 @@ if [[ $dry_run == true ]]; then
   exit 0
 fi
 
+echo "Launching $instance_type in $security_groups"
 instance_id=$(aws ec2 run-instances "--image-id" "$ami" "--count" 1 "--instance-type" "$instance_type" "--key-name" $key_name "--security-groups" "$security_groups" --block-device-mapping '[{"DeviceName":"/dev/sdb", "VirtualName":"ephemeral0"}, {"DeviceName":"/dev/sdc", "VirtualName":"ephemeral1"}, {"DeviceName":"/dev/sdd", "VirtualName":"ephemeral2"}, {"DeviceName":"/dev/sde", "VirtualName":"ephemeral3"}]' --profile "$user_region" --user-data "file://$tmp_dir/user_data_file" --query 'Instances[*].InstanceId')
+
+#instance_id=$(aws ec2 run-instances \
+#              "--image-id" "$ami" \
+#              "--count" 1 \
+#              "--instance-type" "$instance_type" \
+#              "--key-name" "$key_name" \
+#              "--security-groups" "$security_groups" \
+#              --profile "$user_region" \
+#              --user-data "file://$tmp_dir/user_data_file" \
+#              --block-device-mapping '[
+#                { "DeviceName":"/dev/sdb", "VirtualName":"ephemeral0"},
+#                { "DeviceName":"/dev/sdc", "VirtualName":"ephemeral1"},
+#                { "DeviceName":"/dev/sdd", "VirtualName":"ephemeral2"},
+#                { "DeviceName":"/dev/sde", "VirtualName":"ephemeral3"},
+#                { "DeviceName":"/dev/sdf", "Ebs":{"VolumeSize":300}},
+#                { "DeviceName":"/dev/sdg", "Ebs":{"VolumeSize":25}},
+#                { "DeviceName":"/dev/sdh", "Ebs":{"VolumeSize":10}}
+#              ]' \
+#              --query 'Instances[*].InstanceId')
+
 echo $instance_id
 
 state="looking"
