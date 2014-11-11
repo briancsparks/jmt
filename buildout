@@ -417,35 +417,57 @@ else
     fi
 
     # ---------- epson ----------
-    if [[ $forced == epson ]]; then
+    if [[ $forced == epsonhp || $forced == epsonaws ]]; then
+      
       cd
+      if ! [[ -d zz_packages/epson ]]; then
 
-      if ! [[ -d zz_packages/hplip ]]; then
-        echo "Error: Must build hplip first"
-        exit 1
+        if ! [[ -d zz_packages/hplip ]]; then
+          echo "Error: Must build hplip first"
+          exit 1
+        else
+          echo "make sure you have ssh access to mario"
+          sudo apt-get install -y lsb
 
-      elif ! [[ -d zz_packages/epson ]]; then
-        sudo apt-get install -y lsb
+          mkdir -p ~/zz_packages/epson && cd $_
 
-        mkdir -p ~/zz_packages/epson && cd $_
+          # Get tar from: http://download.ebz.epson.net/dsc/du/02/DriverDownloadInfo.do?LG2=EN&CN2=&DSCMI=32949&DSCCHK=fe91afdd267711fc4a49aa597d911d10095c2867
+          # Fetch the package and install it
+          # curl -L -O 'https://download3.ebz.epson.net/dsc/f/03/00/03/29/49/36201e41f124a1f4f7b793533b1ade1202032276/epson-inkjet-printer-escpr-1.4.4-1lsb3.2.tar.gz'
 
-        # Fetch the package and install it
-        # curl -L -O 'https://download2.ebz.epson.net/dsc/f/03/00/03/12/29/d2e49f1e61cde2f687d0fa8160e40e69cb0cd345/epson-inkjet-printer-escpr_1.4.2-1lsb3.2_amd64.deb'
-        # Fetch the package from repository instead from epson website.  This way we have more control over it
-        git clone git@github.com:IPGPTP/mario.git mario
-        sudo dpkg -i mario/print_server/ppds/epson/epson-inkjet-printer-escpr.deb
-        rm -rf mario
-        # Fixup the PPDs
-        cd /opt/epson-inkjet-printer-escpr/ppds/Epson
-        sudo gunzip *
+          # Fetch the package from repository instead from epson website.  This way we have more control over it
+          git clone git@github.com:IPGPTP/mario.git mario
+          echo "installing epson ppds and drivers"
+          sudo tar -zxvf mario/print_server/ppds/epson/epson-inkjet-printer-escpr-1.4.4-1lsb3.2.tar.gz
+          echo "---------------------------------------"
+          echo "copying modified wrapper.c"
+          echo "---------------------------------------"
+          sudo cp -f mario/print_server/lib/wrapper.c epson-inkjet-printer-escpr-1.4.4/src/
+          cd epson-inkjet-printer-escpr-1.4.4
+          # without sudo configure and make do not work
+          sudo ./configure && sudo make && sudo make install
+          cd ..
+          sudo rm -rf mario
 
-        # modify cups filter to use rastertoescpx instead of original
-        sudo sed -i 's/\/opt\/epson-inkjet-printer-escpr\/cups\/lib\/filter\/epson-escpr-wrapper/rastertoescpx/' ./*
+          # copy filter to correct location
+          sudo service cups stop
 
-        # copy the installed ppd files to hpcups
-        sudo cp ./* /home/scotty/zz_packages/hplip/ppd/hpcups
-
-        cd
+          # for AWS copy libes* to /usr/lib, for HPCS copy to /usr/lib/x86_64-linux-gnu
+          echo "copying libes* to their correct location"
+          if [[ $forced == epsonhp ]]; then
+            sudo cp /usr/local/lib/libes* /usr/lib/x86_64-linux-gnu
+          elif [[ $forced == epsonaws ]]; then
+            sudo cp /usr/local/lib/libes* /usr/lib/
+          fi
+          sudo cp -f /usr/local/lib/cups/filter/* /usr/lib/cups/filter
+          #statements
+          sudo service cups start
+          # copy the installed ppd files to hpcups
+          echo "Copying epson ppds to hpcups"
+          sudo cp /usr/local/share/cups/model/epson-inkjet-printer-escpr/*.ppd /home/scotty/zz_packages/hplip/ppd/hpcups
+          cd ..
+          sudo rm -rf epson
+        fi
       fi
     fi
 
