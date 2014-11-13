@@ -471,6 +471,75 @@ else
       fi
     fi
 
+    # ---------- canon -------------
+    if [[ $forced == canon ]]; then
+      echo "creating ~/temp_canon directory"
+      cd
+      mkdir temp_canon && cd $_
+      git clone git@github.com:IPGPTP/mario.git mario
+
+      echo "removing gutenprint ppd directory if already exists"
+      if [[ -d /usr/share/cups/model/gutenprint ]]
+      then
+        sudo rm -rf /usr/share/cups/model/gutenprint/
+      fi
+
+      echo "installing gutenprint-5.2.10"
+      tar xjvf mario/print_server/ppds/canon/gutenprint-5.2.10.tar.bz2
+      cd gutenprint-5.2.10/
+      ./configure --enable-cups-ppds
+      sudo make clean
+      sudo make
+      # it is ok if sudo make install fails
+      if sudo make install ; then
+       echo "sudo make install succeeded"
+      else
+       echo "sudo make install failed but it is ok if this fails"
+      fi
+
+      echo "gunzipping gutenprint ppds"
+      cd /usr/share/cups/model/gutenprint/5.2/Global
+      sudo gunzip *
+      cd ~/temp_canon
+
+      mkdir canon_gutenprint_ppds && cd $_
+
+      echo "copy gutenprint ppds into canon_gutenprint_ppds"
+      sudo cp -r /usr/share/cups/model/gutenprint/5.2/Global/. ./ 
+
+      echo "Removing non canon ppds"
+      FILES=./*.ppd
+      for f in $FILES
+      do
+        echo "Processing $f file..."
+        isCanon="false"
+        while read line || [[ -n "$line" ]]
+        do
+          manufacturer="*Manufacturer"
+          if [[ $line == $manufacturer* && $line == *Canon* ]]
+          then
+            isCanon="true"
+          fi
+          modelLine="*ModelName"
+          if [[ $line == $modelLine* ]]
+          then
+            if [[ $isCanon == "true" ]]
+            then
+              break
+           else
+             isCanon="false"
+             rm $f
+             break
+            fi
+          fi
+        done < "$f"
+      done
+      echo "Copy processed cannon ppds to hpcups directory"
+      cd ~/zz_packages/hplip/ppd/hpcups
+      sudo cp -r ~/temp_canon/canon_gutenprint_ppds/. ./
+      sudo rm -rf ~/temp_canon
+    fi
+
     # ---------- foomatic ----------
     if [[ $forced == rawfoomatic ]]; then
 
