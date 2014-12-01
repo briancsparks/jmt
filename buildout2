@@ -1,0 +1,439 @@
+#!/usr/bin/env bash
+
+# Usage: 
+#   buildout --remote=name-of-remote-server --force-nginx
+#   buildout --remote=name-of-remote-server --force-mongo
+#   buildout --remote=name-of-remote-server --force-redis
+#   buildout --remote=name-of-remote-server --force-nginx --force-hplip --force-imagemagick --force-epson --force-redis
+
+#---
+# When using VPC, you cannot easily SSH into private subnets.  You have to build a port-forwarding rule into the NAT's
+# rules, then ssh to the magic port. See: http://cloudpages.wordpress.com/2013/08/05/ssh-to-an-instance-in-private-subnet/
+
+# on the NAT:
+#   sudo iptables -t nat -A PREROUTING -p tcp --dport 12039 -j DNAT --to-destination 10.0.2.39:22
+#
+#   ssh -p 12039 scotty@the-nat-name
+#---
+
+# ---
+#
+# Panini
+#   tail -F application/current/log/integration.log
+#
+# Restarting worker
+#   cd application/current/ && ./START_RESQUE_WORKER 
+#
+#---
+
+die() {
+  echo $1
+  xcode="99"
+  [[ $# > 1 ]] && xcode="$2"
+  exit $xcode
+}
+
+user="scotty"
+port="22"
+
+orig_args=""
+run_cmd=""
+
+# Options
+for arg in "$@";
+do
+
+  orig_args="${orig_args} ${arg}"
+
+  case $arg in
+    --force-redis)        force_redis="1";           run_cmd="${run_cmd} ${arg}";     shift;;
+    --force-mongo)        force_mongo="1";           run_cmd="${run_cmd} ${arg}";     shift;;
+    --force-nginx)        force_nginx="1";           run_cmd="${run_cmd} ${arg}";     shift;;
+    --force-hplip)        force_hplip="1";           run_cmd="${run_cmd} ${arg}";     shift;;
+    --force-epson)        force_epson="1";           run_cmd="${run_cmd} ${arg}";     shift;;
+    --force-mysql)        force_mysql="1";           run_cmd="${run_cmd} ${arg}";     shift;;
+    --force-imagemagick)  force_imagemagick="1";     run_cmd="${run_cmd} ${arg}";     shift;;
+    --user=*)             user="${arg#*=}";          run_cmd="${run_cmd} ${arg}";     shift;;
+
+    --port=*)             port="${arg#*=}";                                           shift;;
+    --remote=*)           remote="${arg#*=}";                                         shift;;
+
+    --)                                                                               shift;    break;;
+    *)                    echo "$arg";                                                shift;;
+
+  esac
+done
+
+if [[ -n "$remote" ]]
+then
+
+  echo "Going to run remotely: buildout2 ${run_cmd}"
+
+  scp -P $port $0 ${user}@${remote}:buildout2
+  ssh -p $port -A ${user}@${remote} 'chmod +x buildout2'
+  ssh -p $port -A ${user}@${remote} "bash -x ./buildout2 ${run_cmd}"
+
+else
+
+  echo "Running remote ${orig_args}"
+  sudo chmod a+w /tmp 2>&1 > /dev/null
+
+  #----- Machine-level things -----
+
+  # Set the hostname
+  if ! grep `hostname` /etc/hosts 2>&1 > /dev/null
+  then
+    echo "127.0.0.1 `hostname`" | sudo tee -a /etc/hosts
+  fi
+
+  if [[ `whoami` == ${user} ]]
+  then
+
+    # ---------- Nothing works without 777 /tmp ----------
+    if ! stat /tmp | egrep -i '^access:.+777'; then
+      sudo chmod 777 /tmp
+      echo "Must log back in"
+      sleep 1
+      exit 0
+    fi
+
+    # ---------- Install rudimentary stuff ----------
+    cd
+    if ! dpkg -s git-core 2> /dev/null > /dev/null
+    then
+      sudo apt-get update && sudo apt-get install -y libreadline6 git-core build-essential git
+    fi
+
+    # ---------- Grab dotfiles ----------
+    cd
+    if ! [[ -d dotfiles ]]
+    then
+      ssh -o "StrictHostKeyChecking no" git@github.com
+      git clone git@github.com:briancsparks/dotfiles.git && cd dotfiles \
+        && ./setup \
+        && ./setupbash
+    fi
+
+    # ---------- Get ack ----------
+    cd
+    if ! [[ -x ~/local/bin/ack ]]
+    then
+      mkdir -p ~/local/bin ~/local/lib && curl -L 'http://beyondgrep.com/ack-2.10-single-file' > ~/local/bin/ack && chmod 0755 ~/local/bin/ack
+    fi
+
+    # ---------- Install basics ----------
+    cd
+    if ! dpkg -s socat 2> /dev/null > /dev/null
+    then
+
+      # Make certain dirs available to scotty
+      sudo mkdir -p /var/log
+      sudo chown root:admin /var     && sudo chmod g+w /var
+      sudo chown root:admin /var/log && sudo chmod g+w /var/log
+
+      sudo apt-get update && sudo apt-get upgrade -y && sudo apt-get install -y openssl tree curl htop nmap mercurial build-essential git-core socat gawk libcurl4-openssl-dev ntp
+      sudo apt-get install -y ncurses-dev libncurses5-dev libgdbm-dev libyaml-dev libffi-dev libreadline6 libreadline6-dev \
+                              zlib1g zlib1g-dev libssl-dev autoconf libc6-dev automake libtool bison subversion pkg-config libperl-dev \
+                              libpcre3 libpcre3-dev libgd-tools libsqlite3-dev sqlite3 libxml2-dev libxslt-dev libmysqlclient-dev cscope exuberant-ctags 
+
+      mkdir -p ${HOME}/tmp
+
+      # Update bootisms
+      #sudo perl -pi -e "s/\/mnt/\/tmp/g;" /etc/fstab
+      if [[ -b /dev/xvdc ]]; then
+        echo '/dev/xvdc /home/scotty/tmp auto  defaults,nobootwait,noatime,comment=cloudconfig 0 2' | sudo tee -a /etc/fstab
+      fi
+
+      sudo mount tmp
+      sudo chown -R scotty:scotty tmp
+      chmod g+w tmp
+
+      sudo chmod 777 /tmp
+
+      echo "Rebooting after a big apt-get install..."
+      sleep 1
+      sudo shutdown -r now 
+      exit 0
+    fi
+
+    # ---------- MongoDB ----------
+    # This is fast, so do it before all the compiles
+    if [[ -n ${force_mongo} ]]; then
+
+      if ! dpkg -s mongodb-org 2> /dev/null > /dev/null
+      then
+
+        # Install from repos
+        sudo apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv 7F0CEB10
+        echo 'deb http://downloads-distro.mongodb.org/repo/ubuntu-upstart dist 10gen' | sudo tee /etc/apt/sources.list.d/mongodb.list
+        sudo apt-get update
+        sudo apt-get install -y mongodb-org
+
+        sudo service mongod stop
+
+        # setup storage
+        sudo mkdir /data /journal /log
+
+        if [[ -b /dev/xvdf ]]; then sudo mkfs.ext4 /dev/xvdf; echo '/dev/xvdf   /data    ext4  defaults,auto,noatime,noexec,comment=cloudconfig 0 2' | sudo tee -a /etc/fstab; fi
+        if [[ -b /dev/xvdg ]]; then sudo mkfs.ext4 /dev/xvdg; echo '/dev/xvdg   /journal ext4  defaults,auto,noatime,noexec,comment=cloudconfig 0 2' | sudo tee -a /etc/fstab; fi
+        if [[ -b /dev/xvdh ]]; then sudo mkfs.ext4 /dev/xvdh; echo '/dev/xvdh   /log     ext4  defaults,auto,noatime,noexec,comment=cloudconfig 0 2' | sudo tee -a /etc/fstab; fi
+
+        sudo mount /data
+        sudo mount /journal
+        sudo mount /log
+
+        sudo chown mongodb:mongodb /data /journal /log
+
+        sudo ln -s /journal /data/journal
+
+        sudo perl -pi -e "s/^dbpath=.*/dbpath=\/data/g;" /etc/mongod.conf
+        sudo perl -pi -e "s/^logpath=.*/logpath=\/log\/mongod.log/g;" /etc/mongod.conf
+
+        sudo service mongod start
+      fi
+    fi  # Mongo
+    
+    #
+    # ---------- First, we need VIM! ----------
+    #
+    # But, of course, we want to build it with Ruby support, so we build ruby 1.9.3 first.
+    #
+    # Then, we have to remove the system vi / vim
+    #
+
+    # Compile Ruby/vim
+    cd
+    if ! [[ -d zz_packages/vim74 ]]
+    then
+
+      # Get Ruby 1.9.3 source, into the zz_packages dir, untar, configure, make, install
+      mkdir -p zz_packages && cd zz_packages && curl "http://cache.ruby-lang.org/pub/ruby/1.9/ruby-1.9.3-p547.tar.gz" \
+        | tar -xvz && ln -s ruby-1.9.3-p547 ruby && cd ruby && ./configure && make -j`grep -c ^processor /proc/cpuinfo` && sudo make install; cd
+
+      # Install Pry and awesome print
+      sudo gem install pry
+      sudo gem install awesome_print
+
+      # Remove ("purge") the system vi / vim
+      sudo apt-get purge -y vim vim-runtime gvim vim-tiny vim-common vim-gui-common
+
+      # Get VIM 7.4 into the zz_packages dir, untar, configure with Ruby and others, make, install
+      cd zz_packages && curl 'ftp://ftp.vim.org/pub/vim/unix/vim-7.4.tar.bz2' \
+        | tar xvj && ln -s vim74 vim && cd vim \
+        && ./configure --with-features=huge --enable-rubyinterp --enable-pythoninterp --enable-perlinterp --prefix=/usr && make -j`grep -c ^processor /proc/cpuinfo` && sudo make install; cd
+    fi
+
+    # Add the good VIM plugins.
+    cd
+    if ! [[ -d ~/.vim/bundle ]]
+    then
+
+      # Pathogen-ify
+      mkdir -p ~/.vim/autoload ~/.vim/bundle && curl -SLso ~/.vim/autoload/pathogen.vim https://raw.github.com/tpope/vim-pathogen/master/autoload/pathogen.vim
+
+      # Ack
+      cd; cd .vim/ && curl -skL 'http://www.vim.org/scripts/download_script.php?src_id=10433' | tar xvz; cd
+
+      # Tim Pope is a VIM god.
+      cd ~/.vim/bundle \
+        && git clone git@github.com:tpope/vim-rails.git \
+        && git clone git@github.com:tpope/vim-bundler.git \
+        && git clone git@github.com:tpope/vim-fugitive.git \
+        && git clone git@github.com:tpope/pry-editline.git
+
+      # Command-T
+      cd ~/.vim/bundle \
+        && git clone git://git.wincent.com/command-t.git command-t
+      cd ~/.vim/bundle/command-t/ruby/command-t && ruby extconf.rb && make -j`grep -c ^processor /proc/cpuinfo`; cd
+
+      # Syntastic
+      cd ~/.vim/bundle && git clone https://github.com/scrooloose/syntastic.git
+
+      cd
+    fi
+
+    # ---------- Compile Node.js ----------
+    cd
+#    if ! [[ -d zz_packages/node ]]
+    if ! [[ -f ${HOME}/local/bin/node ]]; then
+
+      # Get Node.js source, into the zz_packages dir, untar, configure, make, install
+      mkdir -p ~/zz_packages && cd $_
+
+      if ! [[ -d node ]]; then
+        git clone git@github.com:joyent/node.git
+        cd node
+      else
+        cd node
+        make clean
+        git remote update 
+      fi
+
+      git checkout tags/v0.10.33
+      ./configure --prefix=${HOME}/local
+      make -j`grep -c ^processor /proc/cpuinfo`
+      make install
+
+      cd
+      npm install -g jshint
+
+      cd && mkdir -p dev && cd dev \
+        && npm install underscore glob node-curl
+    fi    # Node.js
+
+    # ---------- Redis-server ----------
+    if [[ -n ${force_redis} ]]; then
+
+      cd
+      if ! [[ -d zz_packages/redis ]]
+      then
+        cd; cd zz_packages && curl http://download.redis.io/redis-stable.tar.gz | tar xvz && ln -s redis-stable redis && cd redis && make -j`grep -c ^processor /proc/cpuinfo` && sudo make install
+        cat redis.conf | sed "s/daemonize no/daemonize yes/; s/# bind 127.0.0.1/bind `curl http://169.254.169.254/latest/meta-data/local-ipv4 | cut -d, -f1`/" | sudo tee /etc/redis.conf > /dev/null
+        sudo redis-server /etc/redis.conf
+      fi    # Redis
+    fi
+
+    # ---------- nginx & Passenger ----------
+    if [[ -n ${force_nginx} ]]; then
+
+      cd
+      if ! [[ -d zz_packages/nginx ]]
+      then
+        cd zz_packages && hg clone http://hg.nginx.org/nginx nginx && cd nginx && ln -fs ./auto/configure configure; cd
+
+        # Passenger
+        sudo gem install bundler --no-ri --no-rdoc \
+          && sudo gem install passenger --no-ri --no-rdoc \
+          && sudo gem install rails -v 4.1.0 --no-ri --no-rdoc
+
+        # Dunno why a build would need non-world writable parent dir, but it does
+        sudo chmod o-w /tmp
+        sudo passenger-install-nginx-module --auto --prefix=/etc/nginx --nginx-source-dir=${HOME}/zz_packages/nginx --extra-configure-flags=none; cd
+        sudo chmod 777 /tmp
+
+        sudo ln -s /etc/nginx/sbin/nginx /usr/sbin/nginx
+
+        sudo mkdir /log
+        if [[ -b /dev/xvdf ]]; then sudo mkfs.ext4 /dev/xvdf; echo '/dev/xvdf   /log    ext4  defaults,auto,comment=cloudconfig 0 2' | sudo tee -a /etc/fstab; fi
+        sudo mount /log
+        sudo chown scotty:scotty /log
+
+      fi
+    fi    # nginx
+
+    # ---------- ImageMagick ----------
+    if [[ -n ${force_imagemagick} || -n ${force_hplip} ]]; then
+
+      cd
+      if ! [[ -d zz_packages/ImageMagick ]]
+      then
+
+        sudo apt-get install -y a2ps libtiff4-dev libfreetype6-dev libpng-dev
+
+        echo export PKG_CONFIG_PATH=/usr/lib/pkgconfig >> ~/.profile
+        cd zz_packages
+
+        if ! [[ -f ImageMagick-6.7.9-10.tar.gz ]]; then
+          curl -L http://sourceforge.net/projects/imagemagick/files/old-sources/6.x/6.7/ImageMagick-6.7.9-10.tar.gz/download -o ImageMagick-6.7.9-10.tar.gz
+        fi
+
+        if ! [[ -f ImageMagick-6.7.9-10.tar.gz ]]; then
+          echo "CANNOT DOWNLOAD IMAGEMAGICK!!"
+          exit 2
+        fi
+
+        cat ImageMagick-6.7.9-10.tar.gz | tar xvz 
+
+        ln -s ImageMagick-6.7.9-10 ImageMagick
+        cd ImageMagick
+        ./configure --prefix=/usr --sysconfdir=/etc --with-modules --with-perl --enable-64bit && make -j`grep -c ^processor /proc/cpuinfo` && sudo make install
+        cd
+      fi
+    fi    # ImageMagick
+    
+    # ---------- hplip ----------
+    if [[ -n ${force_hplip} ]]; then
+
+      cd
+      if ! [[ -d zz_packages/hplip ]]
+      then
+
+        echo DEVICE_URI=x >> ~/.profile
+
+        sudo apt-get install -y libcups2 cups libcups2-dev cups-bsd cups-client libcupsimage2-dev libdbus-1-dev ghostscript \
+                                libsnmp-dev libtool libusb-1.0-0-dev python-imaging policykit-1 policykit-1-gnome \
+                                python-qt4 python-qt4-dbus python-dbus python-gobject python-dev python-notify \
+                                a2ps libtiff4-dev libfreetype6-dev python python-reportlab libsane libsane-dev sane-utils xsane
+
+        cd zz_packages
+
+        if ! [[ -f hplip-3.14.6.tar.gz ]]; then
+          curl -L http://sourceforge.net/projects/hplip/files/hplip/3.14.6/hplip-3.14.6.tar.gz/download -o hplip-3.14.6.tar.gz
+        fi
+
+        if ! [[ -f hplip-3.14.6.tar.gz ]]; then
+          echo "CANNOT DOWNLOAD HPLIP!!"
+          exit 2
+        fi
+
+        cat hplip-3.14.6.tar.gz | tar xvz 
+
+        # remove ppds from hplip, and copy from git repository.  This gives us more control over the ppds
+        git clone git@github.com:IPGPTP/mario.git mario        
+        ln -s hplip-3.14.6 hplip
+        rm hplip/ppd/hpcups/*.ppd.gz
+        sudo cp -r mario/print_server/ppds/hp/* hplip/ppd/hpcups
+        sudo rm -rf mario
+        cd hplip
+        pushd ppd/hpcups && gunzip *; popd
+        ./configure --with-hpppddir=/usr/share/ppd/HP --libdir=/usr/lib64 --prefix=/usr --enable-udev-acl-rules --enable-qt4 \
+                    --enable-doc-build --disable-cups-ppd-install --disable-foomatic-drv-install --disable-foomatic-ppd-install \
+                    --disable-hpijs-install --disable-policykit --enable-cups-drv-install --enable-hpcups-install \
+                    --enable-network-build --enable-dbus-build --enable-scan-build --enable-fax-build
+
+        make -j`grep -c ^processor /proc/cpuinfo` && sudo make install
+
+        echo "Rebooting after installing hplip..."
+        sleep 1
+        sudo shutdown -r now 
+      fi
+    fi    # hplip
+
+    # ---------- epson ----------
+    if [[ -n ${force_epson} ]]; then
+      cd
+
+      if ! [[ -d zz_packages/hplip ]]; then
+        echo "Error: Must build hplip first"
+        exit 1
+
+      elif ! [[ -d zz_packages/epson ]]; then
+        sudo apt-get install -y lsb
+
+        mkdir -p ~/zz_packages/epson && cd $_
+
+        # Fetch the package and install it
+        # curl -L -O 'https://download2.ebz.epson.net/dsc/f/03/00/03/12/29/d2e49f1e61cde2f687d0fa8160e40e69cb0cd345/epson-inkjet-printer-escpr_1.4.2-1lsb3.2_amd64.deb'
+        # Fetch the package from repository instead from epson website.  This way we have more control over it
+        git clone git@github.com:IPGPTP/mario.git mario
+        sudo dpkg -i mario/print_server/ppds/epson/epson-inkjet-printer-escpr.deb
+        rm -rf mario
+        # Fixup the PPDs
+        cd /opt/epson-inkjet-printer-escpr/ppds/Epson
+        sudo gunzip *
+
+        # modify cups filter to use rastertoescpx instead of original
+        sudo sed -i 's/\/opt\/epson-inkjet-printer-escpr\/cups\/lib\/filter\/epson-escpr-wrapper/rastertoescpx/' ./*
+
+        # copy the installed ppd files to hpcups
+        sudo cp ./* /home/scotty/zz_packages/hplip/ppd/hpcups
+
+        cd
+      fi
+    fi    # epson
+
+  fi
+
+  exit 0
+fi
+

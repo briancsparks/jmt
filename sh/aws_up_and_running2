@@ -1,0 +1,178 @@
+#!/usr/bin/env bash
+
+tmpfile=`mktemp /tmp/aws_up_and_running.XXXXX`
+tmpfile="/tmp/aws_up"
+
+die() {
+  echo "$1"
+  exit 2
+}
+
+for arg in "$@"; do case $arg in
+  --zone=*)
+    zone="${arg#*=}";
+    if [[ "$zone" == "west" ]]; then
+      ami_id="ami-0f47053f"
+      key_name="mario-dev"
+      profile="eops"
+      placement="us-west-2c"
+    elif [[ "$zone" == "east" ]]; then
+      ami_id="ami-34cc7a5c"
+      key_name="loki-prod-east"
+      profile="east"
+      placement="us-east-1d"
+    fi
+    shift;;
+
+  --app-ami-id=*)
+    ami_id="${arg#*=}";
+    app_ami_id="${arg#*=}";
+    type="app"
+    shift;;
+
+  --private-ip-address=*)
+    private_ip_address="${arg#*=}";
+    shift;;
+
+  --instance-type=*)
+    instance_type="${arg#*=}";
+    shift;;
+
+  --instance_type=*)
+    instance_type="${arg#*=}";
+    shift;;
+
+  --type=*)
+    type="${arg#*=}";
+    shift;;
+
+  --dry-run)
+    dry_run="1"
+    shift;;
+
+  --verbose)
+    verbose="1"
+    shift;;
+  esac
+done
+
+if [[ -n "$type" && -z "$zone" ]]; then die "Must specify zone before type"; fi
+
+if [[ "$zone" == "west" ]]; then
+  if [[ "$type" == "web" ]]; then
+    security_group_ids="sg-02cea467 sg-29cea44c"
+    subnet_id="subnet-33638c6a"
+    test -z "$private_ip_address" && test -z "$app_ami_id" && private_ip_address="10.0.0.20"
+  elif [[ "$type" == "db" ]]; then
+    security_group_ids="sg-02cea467 sg-81d2b8e4"
+    subnet_id="subnet-43759a1a"
+    test -z "$private_ip_address" && test -z "$app_ami_id" && private_ip_address="10.0.0.240"
+
+    subnet_id="subnet-33638c6a"
+  else
+    security_group_ids="sg-02cea467 sg-3bcea45e"
+    subnet_id="subnet-30638c69"
+    test -z "$private_ip_address" && test -z "$app_ami_id" && private_ip_address="10.0.0.100"
+
+    subnet_id="subnet-33638c6a"
+  fi
+elif [[ "$zone" == "east" ]]; then
+  die "East not supported"
+  if [[ "$type" == "web" ]]; then
+    security_group_ids="sg-02cea467 sg-29cea44c"
+  elif [[ "$type" == "db" ]]; then
+    security_group_ids="sg-02cea467 sg-81d2b8e4"
+  else
+    security_group_ids="sg-02cea467 sg-3bcea45e"
+  fi
+fi
+
+test -z "$ami_id" && ami_id="\$ami_id"
+test -z "$key_name" && key_name="\$key_name"
+test -z "$placement" && placement="\$placement"
+test -z "$profile" && profile="\$profile"
+test -z "$security_group_ids" && security_group_ids="\$security_group_ids"
+test -z "$subnet_id" && subnet_id="\$subnet_id"
+#test -z "$private_ip_address" && private_ip_address="\$private_ip_address"
+test -z "$instance_type" && instance_type="m3.xlarge"
+
+cmd="aws ec2 run-instances "
+cmd="$cmd --image-id $ami_id"
+cmd="$cmd --key-name $key_name"
+cmd="$cmd --placement AvailabilityZone=$placement"
+cmd="$cmd --profile $profile"
+cmd="$cmd --instance-type $instance_type"
+cmd="$cmd --security-group-ids $security_group_ids"
+cmd="$cmd --subnet-id $subnet_id"
+
+if [[ -n "$private_ip_address" ]]; then
+  cmd="$cmd --private-ip-address $private_ip_address"
+fi
+
+cmd="$cmd --associate-public-ip-address"
+cmd="$cmd --user-data file://${HOME}/dev/jmt/sh/user_data_file"
+
+if [[ "$type" == "web" ]]; then
+block_device_mapping='[
+        { "DeviceName":"/dev/sdb", "VirtualName":"ephemeral0"},
+        { "DeviceName":"/dev/sdc", "VirtualName":"ephemeral1"},
+        { "DeviceName":"/dev/sdd", "VirtualName":"ephemeral2"},
+        { "DeviceName":"/dev/sde", "VirtualName":"ephemeral3"},
+        { "DeviceName":"/dev/sdf", "Ebs":{"VolumeSize":100}}
+      ]'
+elif [[ "$type" == "db" ]]; then
+block_device_mapping='[
+        { "DeviceName":"/dev/sdb", "VirtualName":"ephemeral0"},
+        { "DeviceName":"/dev/sdc", "VirtualName":"ephemeral1"},
+        { "DeviceName":"/dev/sdd", "VirtualName":"ephemeral2"},
+        { "DeviceName":"/dev/sde", "VirtualName":"ephemeral3"},
+        { "DeviceName":"/dev/sdf", "Ebs":{"VolumeSize":300}},
+        { "DeviceName":"/dev/sdg", "Ebs":{"VolumeSize":25}},
+        { "DeviceName":"/dev/sdh", "Ebs":{"VolumeSize":10}}
+      ]'
+else
+block_device_mapping='[
+        { "DeviceName":"/dev/sdb", "VirtualName":"ephemeral0"},
+        { "DeviceName":"/dev/sdc", "VirtualName":"ephemeral1"},
+        { "DeviceName":"/dev/sdd", "VirtualName":"ephemeral2"},
+        { "DeviceName":"/dev/sde", "VirtualName":"ephemeral3"}
+      ]'
+fi
+
+tmpfile=`mktemp /tmp/aws_up_and_running.XXXXX`
+
+test -n "$verbose" && echo $cmd
+test -n "$dry_run" && exit
+
+echo $tmpfile
+
+instance_id="$($cmd --block-device-mapping "$block_device_mapping" | tee $tmpfile | tee /tmp/aws_up | egrep InstanceId | cut -d\" -f4)"
+echo $instance_id
+
+state="looking"
+while [[ "$state" != "running" ]]; do
+  if [[ "$state" != "running" ]]; then echo "$(date)   $state"; fi
+  state=$(aws ec2 describe-instances --instance-ids "$instance_id" --query 'Reservations[0].Instances[0].State.Name' --profile "$profile" | sed 's/"//g')
+  sleep 0.1
+done
+
+dns_name=$(aws ec2 describe-instances --instance-ids "$instance_id" --query 'Reservations[0].Instances[0].PublicDnsName' --profile "$profile" | sed 's/"//g')
+echo $dns_name
+
+echo ""
+echo "Do the following:"
+echo ""
+echo "ssh -A scotty@$dns_name"
+echo "ssh scotty@$dns_name 'mkdir -p zz_packages'"
+
+if [[ "$type" == "web" ]]; then
+  echo "./buildout2 --remote=$dns_name --force-nginx"
+elif [[ "$type" == "db" ]]; then
+  echo "./buildout2 --remote=$dns_name --force-mongo"
+else
+  echo "Copying hplip, ImageMagick.  This takes a while during boot of instance"
+  test -f "$HOME/share/hplip-3.14.6.tar.gz" && echo scp "$HOME/share/hplip-3.14.6.tar.gz" "scotty@$dns_name:zz_packages/"
+  test -f "$HOME/share/ImageMagick-6.7.9-10.tar.gz" && echo scp "$HOME/share/ImageMagick-6.7.9-10.tar.gz" "scotty@$dns_name:zz_packages/"
+  echo "./buildout2 --remote=$dns_name --force-nginx --force-hplip --force-imagemagick --force-epson --force-redis"
+fi
+

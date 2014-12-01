@@ -11,6 +11,8 @@ security_groups="$key_name"
 user_region="east"
 region="us-east-1"
 user_zone="d"
+purpose="general"
+count="1"
 
 for arg in "$@"; do case $arg in
   --instance-type=*)  instance_type="${arg#*=}";      shift;;
@@ -20,7 +22,10 @@ for arg in "$@"; do case $arg in
   --region=*)         user_region="${arg#*=}";        shift;;
   --zone=*)           user_zone="${arg#*=}";          shift;;
   --ami=*)            user_ami="${arg#*=}";           shift;;
+  --count=*)          count="${arg#*=}";              shift;;
   --dry-run)          dry_run="true";                 shift;;
+  --mongo)            purpose="mongo";                shift;;
+  --webtier)          purpose="webtier";              shift;;
 
   --) shift; break;;
   *)                    echo "$arg"; shift;;
@@ -35,6 +40,7 @@ if [ "$user_region" == "east" ]; then
   aws_ami_1204_ebs="ami-3acc7a52"
   aws_ami_1204_instance_store="ami-2f8f9246"
   aws_ami_1204_hvm="ami-34cc7a5c"
+
 elif [ "$user_region" == "west" ]; then
   region="us-west-2"
   key_name="loki-prod-west2"
@@ -43,6 +49,24 @@ elif [ "$user_region" == "west" ]; then
   aws_ami_1204_ebs="ami-07470537"
   aws_ami_1204_instance_store="ami-9eed86ae"
   aws_ami_1204_hvm="ami-0f47053f"
+
+elif [ "$user_region" == "eops" ]; then
+  region="us-west-2"
+  key_name="mario-dev"
+
+  if [[ $purpose == "webtier" ]]; then
+    security_groups="sg-29cea44c sg-02cea467"
+  else
+    # app tier
+    security_groups="sg-3bcea45e sg-02cea467"
+  fi
+
+  aws_ami_1204_ebs="ami-07470537"
+  aws_ami_1204_instance_store="ami-9eed86ae"
+  aws_ami_1204_hvm="ami-0f47053f"
+
+  ami="$aws_ami_1204_hvm"
+  user_zone="c"
 fi
 
 zone="${region}${user_zone}"
@@ -84,26 +108,66 @@ if [[ $dry_run == true ]]; then
   exit 0
 fi
 
-echo "Launching $instance_type in $security_groups"
-instance_id=$(aws ec2 run-instances "--image-id" "$ami" "--count" 1 "--instance-type" "$instance_type" "--key-name" $key_name "--security-groups" "$security_groups" --block-device-mapping '[{"DeviceName":"/dev/sdb", "VirtualName":"ephemeral0"}, {"DeviceName":"/dev/sdc", "VirtualName":"ephemeral1"}, {"DeviceName":"/dev/sdd", "VirtualName":"ephemeral2"}, {"DeviceName":"/dev/sde", "VirtualName":"ephemeral3"}]' --profile "$user_region" --user-data "file://$tmp_dir/user_data_file" --query 'Instances[*].InstanceId')
+echo "Launching $instance_type in $security_groups in ${zone}"
+
+# --mongo / --webtier
+if [[ $purpose == "mongo" ]]; then
+  block_device_mapping='[
+                  { "DeviceName":"/dev/sdb", "VirtualName":"ephemeral0"},
+                  { "DeviceName":"/dev/sdc", "VirtualName":"ephemeral1"},
+                  { "DeviceName":"/dev/sdd", "VirtualName":"ephemeral2"},
+                  { "DeviceName":"/dev/sde", "VirtualName":"ephemeral3"},
+                  { "DeviceName":"/dev/sdf", "Ebs":{"VolumeSize":300}},
+                  { "DeviceName":"/dev/sdg", "Ebs":{"VolumeSize":25}},
+                  { "DeviceName":"/dev/sdh", "Ebs":{"VolumeSize":10}}
+                ]'
+elif [[ $purpose == "webtier" ]]; then
+  block_device_mapping='[
+                  { "DeviceName":"/dev/sdb", "VirtualName":"ephemeral0"},
+                  { "DeviceName":"/dev/sdc", "VirtualName":"ephemeral1"},
+                  { "DeviceName":"/dev/sdd", "VirtualName":"ephemeral2"},
+                  { "DeviceName":"/dev/sde", "VirtualName":"ephemeral3"},
+                  { "DeviceName":"/dev/sdf", "Ebs":{"VolumeSize":100}}
+                ]'
+else
+  block_device_mapping='[
+                  { "DeviceName":"/dev/sdb", "VirtualName":"ephemeral0"},
+                  { "DeviceName":"/dev/sdc", "VirtualName":"ephemeral1"},
+                  { "DeviceName":"/dev/sdd", "VirtualName":"ephemeral2"},
+                  { "DeviceName":"/dev/sde", "VirtualName":"ephemeral3"}
+                ]'
+fi
+
+# sg-02cea467 sg-3bcea45e    app
+#  subnet-30638c69
+# sg-02cea467 sg-81d2b8e4    db
+#  subnet-43759a1a
+# sg-02cea467 sg-29cea44c    web
+#  subnet-33638c6a
+aws ec2 run-instances \
+            --image-id "$ami" \
+            --count "$count" \
+            --instance-type "$instance_type" \
+            --key-name "$key_name" \
+            --security-group-ids sg-02cea467 sg-81d2b8e4 \
+            --subnet-id subnet-43759a1a \
+            --profile "$user_region" \
+            --user-data "file://$tmp_dir/user_data_file" \
+            --placement "AvailabilityZone=${zone}" \
+            --block-device-mapping "${block_device_mapping}" \
+            --associate-public-ip-address
+exit
 
 #instance_id=$(aws ec2 run-instances \
-#              "--image-id" "$ami" \
-#              "--count" 1 \
-#              "--instance-type" "$instance_type" \
-#              "--key-name" "$key_name" \
-#              "--security-groups" "$security_groups" \
+#              --image-id "$ami" \
+#              --count "$count" \
+#              --instance-type "$instance_type" \
+#              --key-name "$key_name" \
+#              --security-groups mario-dev-web mario-admins1 \
 #              --profile "$user_region" \
 #              --user-data "file://$tmp_dir/user_data_file" \
-#              --block-device-mapping '[
-#                { "DeviceName":"/dev/sdb", "VirtualName":"ephemeral0"},
-#                { "DeviceName":"/dev/sdc", "VirtualName":"ephemeral1"},
-#                { "DeviceName":"/dev/sdd", "VirtualName":"ephemeral2"},
-#                { "DeviceName":"/dev/sde", "VirtualName":"ephemeral3"},
-#                { "DeviceName":"/dev/sdf", "Ebs":{"VolumeSize":300}},
-#                { "DeviceName":"/dev/sdg", "Ebs":{"VolumeSize":25}},
-#                { "DeviceName":"/dev/sdh", "Ebs":{"VolumeSize":10}}
-#              ]' \
+#              --placement "AvailabilityZone=${zone}" \
+#              --block-device-mapping "${block_device_mapping}" \
 #              --query 'Instances[*].InstanceId')
 
 echo $instance_id
