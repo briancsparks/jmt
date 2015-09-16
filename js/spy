@@ -4,8 +4,8 @@
  * Spy on a file and when it changes, spit out a string.
  *
  * Generally, you pipe spy to a command:
- * 
- *        spy "load %s1" foo.dat | run-some-command 
+ *
+ *        spy "load %s1" foo.dat | run-some-command
  *
  * This will send the string "load foo.dat" to the stdin of run-some-command.
  */
@@ -16,6 +16,7 @@ var fs        = require('fs');
 var path      = require('path');
 var glob      = require('glob');
 var sg        = require('./utils/sg');
+var spawn     = require('child_process').spawn;
 
 var die_trying  = sg.die_trying;
 var printf      = sg.printf;
@@ -23,70 +24,138 @@ var printf      = sg.printf;
 var m;
 var options = {};
 var filenames = {};
-sg.__run([
+var commandToRun = [];
 
-  // Process command-line parameters
-  function(next) {
-    var onlyFilenames = false;
+var commandFilename, theCommand;
 
-    if (process.argv.length <= 2) {
-      sg.die(1, "Usage: spy [--quote | -q | --verbose] format filename");
-    }
+var main = function() {
+  sg.__run([
 
-    sg.__each(next, _.rest(process.argv, 2), function(arg, nextArg) {
-      if (arg === '--') { onlyFilenames = true; return nextArg(); }
+    // Process command-line parameters
+    function(next) {
+      var processingFilenames = false;
+      var processingCommand   = false;
 
-      if (!onlyFilenames) {
-        if ((m = /^--(.+)/.exec(arg))) { options[m[1]] = true; return nextArg(); }
-        if ((m = /^-(.+)/.exec(arg))) { options[m[1]] = true; return nextArg(); }
-        if (!options.format) { setFormat(arg); return nextArg(); }
+      if (process.argv.length <= 2) {
+        sg.die(1, "Usage: spy [--quote | -q | --verbose] format filename");
       }
 
-      glob(arg, die_trying(function(_X, files) {
-        _.each(files, function(file) {
-          var fullFilename = file[0] === '/' ? file : path.join(process.cwd(), file);
-          filenames[fullFilename] = true;
+      sg.__each(next, _.rest(process.argv, 2), function(arg, nextArg) {
+        if (arg === '--')  { processingFilenames = true;  processingCommand   = false; return nextArg(); }
+        if (arg === '---') { processingFilenames = false; processingCommand   = true;  return nextArg(); }
+
+        if (processingFilenames) {
+          return glob(arg, function(err, files) {
+            if (err) { console.error(err); }
+
+            _.each(files, function(file) {
+              var fullFilename = file[0] === '/' ? file : path.join(process.cwd(), file);
+              filenames[fullFilename] = true;
+            });
+            return nextArg();
+          });
+        }
+
+        /* otherwise */
+        if (processingCommand) {
+          commandToRun.push(arg);
+          return nextArg();
+        }
+
+        /* otherwise */
+        if ((m = /^--(.+)/.exec(arg))) { options[sanitizeKey(m[1])] = true; return nextArg(); }
+        if ((m = /^-(.+)/.exec(arg)))  { options[sanitizeKey(m[1])] = true; return nextArg(); }
+
+      });
+
+    }, function(next) {
+      theCommand = commandToRun.join(' ');
+
+      return next();
+
+    // Write the command to a tmp file
+    }, function(next) {
+      var commandDir = path.join('/tmp', 'spy');
+
+
+      return fs.mkdir(commandDir, function(err) {
+
+        commandFilename = path.join(commandDir, 'spy-cmd');
+        var commandFileContent = '#!/bin/bash -e\n' + commandToRun.join(' ') + '\n';
+        return fs.writeFile(commandFilename, commandFileContent, function(err) {
+          if (err) { console.error(err); }
+          return fs.chmod(commandFilename, 0777, function(err) {
+            if (err) { console.error(err); }
+            return next();
+          });
         });
-        return nextArg();
-      }));
-    });
-  }],
+      });
 
-  // main
-  function() {
-    logit("Command line: ", process.argv);
+    }],
 
-    _.each(filenames, function(item, filename) {
-      watch(filename);
-    });
-  }
-);
+    // main
+    function() {
+      logit('files: ', _.keys(filenames));
+      logit('command to execute: ', theCommand);
+      logit('options: ', options);
 
-var watch = function(filename) {
-  logit("Watching: " + filename);
-  fs.watchFile(filename, {persistent: true, interval: 25}, function(curr, prev) {
-    if (curr.mtime === prev.mtime) { return; }
+      if (options.dry_run) {
+        process.exit(0);
+      }
 
-    var msgFilename = filename;
-    if (options.q || options.quote) {
-      msgFilename = '"' + msgFilename + '"';
+      _.each(filenames, function(item, filename) {
+        watch(filename, _.keys(filenames).length < 2);
+      });
     }
-
-    var message = sg.printf(options.format || "%s1\n", msgFilename);
-    logit('spy-log: ' + message.replace('\n', ''));
-
-    process.stdout.write(message);
-    if (options.once) {
-      process.exit(0);
-    }
-  });
+  );
 };
 
-var setFormat = function(format) {
-  if (format.substr(-2) !== '\n') {
-    format += '\n';
+var watch = function(filename, autoLaunch) {
+  logit("Watching: " + filename);
+  var printIt = function(curr, prev, force) {
+    if (!force && curr.mtime === prev.mtime) { return; }
+
+    console.log("Processing: " + filename + ' -----------------------------------------');
+    var command = spawn(commandFilename, [filename]);
+
+    command.stdout.setEncoding('utf8');
+    command.stdout.on('data', function(chunk) {
+      process.stdout.write(chunk);
+    });
+
+    command.stderr.setEncoding('utf8');
+    command.stderr.on('data', function(chunk) {
+      process.stderr.write(chunk);
+    });
+
+    command.on('exit', function(code, signal) {
+      process.stderr.write('done------------------------------------\n');
+    });
+
+//    return exec([commandFilename, filename].join(' '), function(err, stdout, stderr) {
+//
+//      console.error('stdout++++++++++++');
+//      console.log(stdout);
+//      console.error('stdout------------');
+//
+//      if (stderr) {
+//        console.error('stderr++++++++++++');
+//        console.error(stderr);
+//        console.error('stderr------------');
+//      }
+//
+//      console.log("");
+//    });
+  };
+
+  fs.watchFile(filename, {persistent: true, interval: 25}, function(curr, prev) {
+    printIt(curr, prev);
+  });
+
+  // print it once to start
+  if (autoLaunch) {
+    printIt(null, null, true);
   }
-  options.format = format;
 };
 
 var logit = function() {
@@ -94,4 +163,10 @@ var logit = function() {
     console.error.apply(this, arguments);
   }
 };
+
+var sanitizeKey = function(key) {
+  return key.replace(/-/g, '_');
+};
+
+main();
 
